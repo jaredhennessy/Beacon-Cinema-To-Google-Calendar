@@ -47,9 +47,9 @@ This project automates the process of scraping event data from [The Beacon Cinem
 
    ```csv
    Title,SeriesTag,DateRecorded
-   LAURA,lynchian,2025-04-19T22:17:49.183Z
-   SUNSET BOULEVARD,lynchian,2025-04-19T22:17:49.183Z
-   SMOOTH TALK,lynchian,2025-04-19T22:17:49.183Z
+   LAURA,lynchian,2025-04-19T22:51:10.249Z
+   SUNSET BOULEVARD,lynchian,2025-04-19T22:51:10.249Z
+   SMOOTH TALK,lynchian,2025-04-19T22:51:10.249Z
    ```
 
 3. **`files/schedule.csv`**  
@@ -57,8 +57,9 @@ This project automates the process of scraping event data from [The Beacon Cinem
 
    ```csv
    Title,Date,Time,URL,SeriesTag,DateRecorded
-   BATANG WEST SIDE,2025-04-19,16:00,https://thebeacon.film/calendar/movie/batang-west-side,,2025-04-19T22:17:59.690Z
-   THE ENCAMPMENTS,2025-04-19,22:00,https://thebeacon.film/calendar/movie/the-encampments,,2025-04-19T22:17:59.690Z
+   BATANG WEST SIDE,2025-04-19,16:00,https://thebeacon.film/calendar/movie/batang-west-side,,2025-04-19T22:51:22.613Z
+   IRON LUNG PRESENTS TETSUO THE IRON MAN W/ PAINTED FLIES,2025-04-20,14:00,https://thebeacon.film/calendar/movie/iron-lung-presents-tetsuo-the-iron-man-w-painted-flies,,2025-04-19T22:51:22.613Z
+   THE RED HOUSE,2025-04-20,17:00,https://thebeacon.film/calendar/movie/the-red-house,lynchian,2025-04-19T22:51:22.613Z
    ```
 
 ---

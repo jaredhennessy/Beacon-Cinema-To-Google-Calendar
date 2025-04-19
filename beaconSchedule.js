@@ -60,7 +60,7 @@ const createCsvWriter = require('csv-writer').createObjectCsvWriter;
                 .split('\n')
                 .slice(1) // Skip the header row
                 .map(line => line.split(',').map(field => field.trim())) // Split and trim fields
-                .filter(fields => fields.length === 2) // Ensure valid rows
+                .filter(fields => fields.length >= 3) // Ensure valid rows with three fields
                 .map(([title, seriesTag]) => [normalizeTitle(title), seriesTag]) // Map normalized title to seriesTag
         );
 
@@ -139,9 +139,7 @@ const createCsvWriter = require('csv-writer').createObjectCsvWriter;
             .filter(event => event.title !== 'RENT THE BEACON') // Skip records where Title is "RENT THE BEACON"
             .map(event => ({
                 ...event,
-                seriesTag: event.title === '?????? CINEMA'
-                    ? 'secret'
-                    : seriesMap.get(normalizeTitle(event.title)) || '', // Use "secret" for "?????? CINEMA", otherwise lookup or blank
+                seriesTag: seriesMap.get(normalizeTitle(event.title)) || '', // Lookup seriesTag from series.csv or leave blank
                 dateRecorded: currentTimestamp // Populate with the current timestamp
             }));
 
