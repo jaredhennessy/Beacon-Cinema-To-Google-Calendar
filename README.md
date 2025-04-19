@@ -39,17 +39,17 @@ This project automates the process of scraping event data from [The Beacon Cinem
    ```csv
    seriesName,seriesURL,seriesTag
    "THE ABSURD MYSTERY OF THE STRANGE FORCES OF EXISTENCE: ""LYNCHIAN” CINEMA""",https://thebeacon.film/programs/entry/the-absurd-mystery-of-the-strange-forces-of-existence-lynchian-cinema,lynchian
-   "TO LIVE IS TO DREAM: A NORTHWEST TRIBUTE TO DAVID LYNCH",https://thebeacon.film/programs/entry/to-live-is-to-dream-a-northwest-tribute-to-david-lynch,lynch
+   "TO LIVE IS TO DREAM: A NORTHWEST TRIBUTE TO DAVID LYNCH",https://thebeacon.film/programs/entry/to-live-is-to-dream-a-northwest-tribute-to-david-lynch,davidlynch
    ```
 
 2. **`files/series.csv`**  
    Stores titles and their associated `SeriesTag` scraped from the URLs in `files/seriesIndex.csv`. Example:
 
    ```csv
-   Title,SeriesTag
-   LAURA,lynchian
-   SUNSET BOULEVARD,lynchian
-   SMOOTH TALK,lynchian
+   Title,SeriesTag,DateRecorded
+   LAURA,lynchian,2025-04-19T22:17:49.183Z
+   SUNSET BOULEVARD,lynchian,2025-04-19T22:17:49.183Z
+   SMOOTH TALK,lynchian,2025-04-19T22:17:49.183Z
    ```
 
 3. **`files/schedule.csv`**  
@@ -57,8 +57,8 @@ This project automates the process of scraping event data from [The Beacon Cinem
 
    ```csv
    Title,Date,Time,URL,SeriesTag,DateRecorded
-   BATANG WEST SIDE,2025-04-19,16:00,https://thebeacon.film/calendar/movie/batang-west-side,,2025-04-19T21:51:48.844Z
-   THE RED HOUSE,2025-04-20,17:00,https://thebeacon.film/calendar/movie/the-red-house,lynchian,2025-04-19T21:51:48.844Z
+   BATANG WEST SIDE,2025-04-19,16:00,https://thebeacon.film/calendar/movie/batang-west-side,,2025-04-19T22:17:59.690Z
+   THE ENCAMPMENTS,2025-04-19,22:00,https://thebeacon.film/calendar/movie/the-encampments,,2025-04-19T22:17:59.690Z
    ```
 
 ---
