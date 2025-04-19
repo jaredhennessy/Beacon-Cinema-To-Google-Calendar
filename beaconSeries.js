@@ -6,24 +6,27 @@ const csvParser = require('csv-parser');
 (async () => {
     const seriesIndexCsvPath = 'seriesIndex.csv'; // Correct file path
 
-    // Read the first non-header row from seriesIndex.csv
-    let seriesUrl, seriesTag;
     try {
         const rows = [];
         if (fs.existsSync(seriesIndexCsvPath)) {
             fs.createReadStream(seriesIndexCsvPath)
                 .pipe(csvParser())
                 .on('data', (row) => rows.push(row))
-                .on('end', () => {
+                .on('end', async () => {
                     if (rows.length > 0) {
-                        const firstRow = rows[0];
-                        console.log('First row fields:', firstRow); // Log the fields
-                        seriesUrl = firstRow.seriesURL; // Use the correct field name
-                        seriesTag = firstRow.seriesTag; // Extract seriesTag
-                        if (!seriesUrl) {
-                            throw new Error('seriesURL field is missing or empty in the first row.');
+                        console.log(`Found ${rows.length} series in ${seriesIndexCsvPath}.`);
+                        for (const row of rows) {
+                            const seriesUrl = row.seriesURL;
+                            const seriesTag = row.seriesTag;
+
+                            if (!seriesUrl) {
+                                console.warn('Skipping row with missing seriesURL:', row);
+                                continue;
+                            }
+
+                            console.log(`Processing series: ${row.seriesName}`);
+                            await executeScript(seriesUrl, seriesTag); // Process each series
                         }
-                        executeScript(seriesUrl, seriesTag); // Pass seriesTag to the script
                     } else {
                         console.error('No data found in seriesIndex.csv.');
                     }
@@ -38,18 +41,13 @@ const csvParser = require('csv-parser');
     async function executeScript(seriesUrl, seriesTag) {
         const seriesCsvPath = 'series.csv';
 
-        // Delete series.csv if it exists
-        if (fs.existsSync(seriesCsvPath)) {
-            fs.unlinkSync(seriesCsvPath);
-            console.log(`${seriesCsvPath} deleted.`);
-        }
-
         const seriesCsvWriter = createCsvWriter({
             path: seriesCsvPath,
             header: [
-                { id: 'title', title: 'Title' },
-                { id: 'seriesTag', title: 'SeriesTag' }
-            ]
+                { id: 'Title', title: 'Title' },
+                { id: 'SeriesTag', title: 'SeriesTag' }
+            ],
+            append: true // Append new rows to the file
         });
 
         let browser;
@@ -80,13 +78,39 @@ const csvParser = require('csv-parser');
 
             if (filteredTitles.length === 0) {
                 console.warn('No valid titles extracted. Please check the page structure or selector.');
-            } else {
-                console.log(`Extracted ${filteredTitles.length} valid titles.`);
+                return; // Exit if no titles were extracted
             }
 
-            const seriesRecords = filteredTitles.map(title => ({ title, seriesTag })); // Include seriesTag
+            console.log(`Extracted ${filteredTitles.length} valid titles.`);
+
+            // Remove rows with the matching seriesTag only if titles were successfully retrieved
+            let existingRows = [];
+            if (fs.existsSync(seriesCsvPath)) {
+                existingRows = await new Promise((resolve, reject) => {
+                    const rows = [];
+                    fs.createReadStream(seriesCsvPath)
+                        .pipe(csvParser())
+                        .on('data', (row) => rows.push(row))
+                        .on('end', () => resolve(rows))
+                        .on('error', reject);
+                });
+
+                const filteredRows = existingRows.filter(row => row.SeriesTag !== seriesTag);
+                const tempCsvWriter = createCsvWriter({
+                    path: seriesCsvPath,
+                    header: [
+                        { id: 'Title', title: 'Title' },
+                        { id: 'SeriesTag', title: 'SeriesTag' }
+                    ]
+                });
+
+                await tempCsvWriter.writeRecords(filteredRows);
+                console.log(`Removed rows with SeriesTag "${seriesTag}" from ${seriesCsvPath}.`);
+            }
+
+            const seriesRecords = filteredTitles.map(title => ({ Title: title, SeriesTag: seriesTag })); // Include seriesTag
             await seriesCsvWriter.writeRecords(seriesRecords);
-            console.log('series.csv written successfully.');
+            console.log('series.csv updated successfully.');
         } catch (error) {
             console.error('An error occurred:', error.message);
         } finally {

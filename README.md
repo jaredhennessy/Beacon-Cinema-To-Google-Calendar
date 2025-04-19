@@ -53,6 +53,40 @@ This script integrates with the Google Calendar API to manage events based on `s
 
 ---
 
+### 3. `beaconSeries.js`
+
+This script processes series information from `seriesIndex.csv`, scrapes titles from the corresponding URLs, and updates `series.csv`:
+
+- **`seriesIndex.csv`**: Contains the list of series with their names, URLs, and tags.
+- **`series.csv`**: Stores the titles and their associated series tags.
+
+#### Features of beaconSeries.js
+
+- Reads all rows from `seriesIndex.csv`.
+- For each series:
+  - Scrapes titles from the provided URL.
+  - Removes rows from `series.csv` where the `SeriesTag` matches the current series tag, but only if titles are successfully retrieved.
+  - Appends the new titles with their `SeriesTag` to `series.csv`.
+- Skips empty or whitespace-only titles and excludes specific titles like "?????? CINEMA".
+- Logs detailed information about the scraping process, including the number of titles extracted.
+
+#### Usage
+
+1. Ensure `seriesIndex.csv` is populated with the following columns:
+   - `seriesName`: The name of the series.
+   - `seriesURL`: The URL to scrape titles from.
+   - `seriesTag`: A unique tag for the series.
+
+2. Run the script:
+
+   ```bash
+   node beaconSeries.js
+   ```
+
+3. The script will update `series.csv` with the latest titles for each series.
+
+---
+
 ## Setup Instructions
 
 ### Prerequisites
@@ -100,13 +134,13 @@ npm install
 
    Follow the OAuth2 authorization flow if prompted.
 
-3. **Scrape Lynchian Titles**:
+3. **Process Series Information**:
 
    ```bash
-   node lynchianBeacon.js
+   node beaconSeries.js
    ```
 
-   This will generate or update `lynchian.csv`.
+   This will update `series.csv` with the latest titles for each series.
 
 ---
 
