@@ -1,6 +1,6 @@
-# Beacon Calendar Automation
+# Beacon Cinema to Google Calendar
 
-This project automates the process of scraping event data from [The Beacon Film Calendar](https://thebeacon.film/calendar) and updating a Google Calendar with the scraped events.
+This project automates the process of scraping event data from [The Beacon Cinema Film Calendar](https://thebeacon.film/calendar) and updating a Google Calendar with the scraped events.
 
 ## Scripts Overview
 
@@ -44,10 +44,6 @@ This script integrates with the Google Calendar API to manage events based on `s
 - Supports timezone configuration via `.env`.
 
 ---
-
-### 3. `lynchianBeacon.js`
-
-This script scrapes the Beacon's "Lynchian" film series page and generates a CSV file (`lynchian.csv`) containing the titles of all films in the series.
 
 #### Features of lynchianBeacon.js
 
@@ -132,3 +128,9 @@ OAUTH2_REDIRECT_URI=http://localhost:3000 (for scripts running locally or the UR
 - [Google Calendar API Documentation](https://developers.google.com/calendar)
 - [Google Cloud Console](https://console.cloud.google.com/)
 - [Puppeteer Documentation](https://pptr.dev/)
+
+---
+
+## License
+
+This project is licensed under the GNU General Public License v3.0. See the [LICENSE](LICENSE) file for details.
