@@ -1,18 +1,23 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
+const path = require('path'); // Use path for relative paths
+const { execSync } = require('child_process'); // Import child_process to execute scripts
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 
 (async () => {
-    const calendarUrl = 'https://thebeacon.film/calendar';
-    const lynchianCsvPath = 'lynchian.csv';
-    const filmsCsvPath = 'films.csv';
-    const scheduleCsvPath = 'schedule.csv';
+    // Execute beaconSeries.js
+    try {
+        console.log('Executing beaconSeries.js...');
+        execSync('node ./beaconSeries.js', { stdio: 'inherit' }); // Use relative path
+        console.log('beaconSeries.js executed successfully.');
+    } catch (error) {
+        console.error('Error executing beaconSeries.js:', error.message);
+        return; // Exit if beaconSeries.js fails
+    }
 
-    const filmsCsvWriter = createCsvWriter({
-        path: filmsCsvPath,
-        header: [{ id: 'title', title: 'Title' }],
-        append: true // Append new records instead of overwriting
-    });
+    const calendarUrl = 'https://thebeacon.film/calendar';
+    const seriesCsvPath = path.join(__dirname, 'files', 'series.csv');
+    const scheduleCsvPath = path.join(__dirname, 'files', 'schedule.csv');
 
     const scheduleCsvWriter = createCsvWriter({
         path: scheduleCsvPath,
@@ -21,7 +26,8 @@ const createCsvWriter = require('csv-writer').createObjectCsvWriter;
             { id: 'date', title: 'Date' },
             { id: 'time', title: 'Time' },
             { id: 'url', title: 'URL' },
-            { id: 'lynchian', title: 'Lynchian' }
+            { id: 'seriesTag', title: 'SeriesTag' },
+            { id: 'dateRecorded', title: 'DateRecorded' }
         ]
     });
 
@@ -48,58 +54,17 @@ const createCsvWriter = require('csv-writer').createObjectCsvWriter;
         // Filter out "RENT THE BEACON"
         titleMap.delete(normalizeTitle('RENT THE BEACON'));
 
-        // Read existing titles from films.csv into a set and normalize them
-        const existingTitles = new Set(
-            fs.existsSync(filmsCsvPath)
-                ? fs.readFileSync(filmsCsvPath, 'utf8')
-                      .split('\n')
-                      .slice(1) // Skip the header row
-                      .map(line => normalizeTitle(line)) // Normalize titles
-                      .filter(line => line)
-                : []
-        );
-
-        // Filter out titles that are already in films.csv
-        const newTitles = Array.from(titleMap.keys()).filter(title => !existingTitles.has(title));
-
-        // Write only new titles to films.csv, preserving original formatting
-        const filmsRecords = newTitles.map(title => ({ title: titleMap.get(title) })); // Preserve original formatting
-        if (filmsRecords.length > 0) {
-            await filmsCsvWriter.writeRecords(filmsRecords);
-            console.log('New titles added to films.csv:', filmsRecords.map(record => record.title));
-        } else {
-            console.log('No new titles to add to films.csv.');
-        }
-
-        // Read lynchian.csv into a set for quick lookup
-        const lynchianSet = new Set(
-            fs.readFileSync(lynchianCsvPath, 'utf8')
+        // Read series.csv into a map for quick lookup
+        const seriesMap = new Map(
+            fs.readFileSync(seriesCsvPath, 'utf8')
                 .split('\n')
                 .slice(1) // Skip the header row
-                .map(line => normalizeTitle(line)) // Normalize titles
-                .filter(line => line) // Remove empty lines
+                .map(line => line.split(',').map(field => field.trim())) // Split and trim fields
+                .filter(fields => fields.length === 2) // Ensure valid rows
+                .map(([title, seriesTag]) => [normalizeTitle(title), seriesTag]) // Map normalized title to seriesTag
         );
 
-        // Read films.csv into a set for filtering schedule data
-        const filmsSet = new Set(
-            fs.readFileSync(filmsCsvPath, 'utf8')
-                .split('\n')
-                .slice(1)
-                .map(line => normalizeTitle(line)) // Normalize titles
-                .filter(line => line)
-        );
-
-        console.log('Titles in filmsSet:', Array.from(filmsSet));
-
-        // Read existing schedule.csv and filter out rows with dates >= today
-        const today = new Date().toISOString().split('T')[0]; // Get today's date in YYYY-MM-DD format
-        const existingSchedule = fs.existsSync(scheduleCsvPath)
-            ? fs.readFileSync(scheduleCsvPath, 'utf8')
-                  .split('\n')
-                  .slice(1) // Skip the header row
-                  .map(row => row.split(',')) // Parse CSV rows
-                  .filter(row => row[1] < today) // Keep rows with dates < today
-            : [];
+        console.log('Extracted titles:', Array.from(titleMap.values()));
 
         // Extract schedule data from the website
         const schedule = await page.evaluate(() => {
@@ -131,30 +96,58 @@ const createCsvWriter = require('csv-writer').createObjectCsvWriter;
             return scheduleList;
         });
 
-        console.log('Extracted schedule:', schedule);
+        // Remove records from schedule.csv where the start date is >= today's date
+        const today = new Date().toISOString().split('T')[0]; // Get today's date in YYYY-MM-DD format
+        const existingSchedule = fs.existsSync(scheduleCsvPath)
+            ? fs.readFileSync(scheduleCsvPath, 'utf8')
+                  .split('\n')
+                  .slice(1) // Skip the header row
+                  .map(line => line.split(',').map(field => field.trim())) // Split and trim fields
+                  .filter(fields => fields.length >= 2) // Ensure valid rows
+            : [];
 
-        // Filter schedule data to only include titles in films.csv and dates >= today
-        const filteredSchedule = schedule.filter(event =>
-            filmsSet.has(normalizeTitle(event.title)) && event.date >= today
-        );
+        const filteredSchedule = existingSchedule.filter(([title, date]) => date < today); // Keep rows with dates < today
 
-        console.log('Filtered schedule:', filteredSchedule);
-
-        // Add debugging logs to confirm normalized titles
-        filteredSchedule.forEach(event => {
-            console.log('Normalized title from website:', normalizeTitle(event.title));
-            console.log('Normalized title in filmsSet:', Array.from(filmsSet));
+        const tempScheduleCsvWriter = createCsvWriter({
+            path: scheduleCsvPath,
+            header: [
+                { id: 'title', title: 'Title' },
+                { id: 'date', title: 'Date' },
+                { id: 'time', title: 'Time' },
+                { id: 'url', title: 'URL' },
+                { id: 'seriesTag', title: 'SeriesTag' },
+                { id: 'dateRecorded', title: 'DateRecorded' }
+            ]
         });
 
-        // Add Lynchian field to schedule
-        const scheduleWithLynchian = filteredSchedule.map(event => ({
-            ...event,
-            lynchian: lynchianSet.has(normalizeTitle(event.title)) ? 'Y' : 'N'
-        }));
+        await tempScheduleCsvWriter.writeRecords(
+            filteredSchedule.map(([title, date, time, url, seriesTag, dateRecorded]) => ({
+                title,
+                date,
+                time,
+                url,
+                seriesTag,
+                dateRecorded
+            }))
+        );
+
+        console.log('Removed future screenings from schedule.csv.');
+
+        // Add seriesTag and dateRecorded fields to schedule, skipping "RENT THE BEACON"
+        const currentTimestamp = new Date().toISOString();
+        const scheduleWithSeriesTag = schedule
+            .filter(event => event.title !== 'RENT THE BEACON') // Skip records where Title is "RENT THE BEACON"
+            .map(event => ({
+                ...event,
+                seriesTag: event.title === '?????? CINEMA'
+                    ? 'secret'
+                    : seriesMap.get(normalizeTitle(event.title)) || '', // Use "secret" for "?????? CINEMA", otherwise lookup or blank
+                dateRecorded: currentTimestamp // Populate with the current timestamp
+            }));
 
         // Write the final schedule to schedule.csv
         await scheduleCsvWriter.writeRecords(
-            scheduleWithLynchian.map(event => ({
+            scheduleWithSeriesTag.map(event => ({
                 ...event,
                 title: titleMap.get(normalizeTitle(event.title)) || event.title // Preserve original formatting
             }))

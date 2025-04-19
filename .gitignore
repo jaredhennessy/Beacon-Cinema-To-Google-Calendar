@@ -18,6 +18,7 @@ token.json
 
 # CSV files
 *.csv
+!files/seriesIndex.csv  # Allow seriesIndex.csv in the files subfolder
 
 # Build artifacts
 dist/

@@ -1,10 +1,12 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
+const path = require('path'); // Use path for relative paths
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 const csvParser = require('csv-parser');
 
 (async () => {
-    const seriesIndexCsvPath = 'seriesIndex.csv'; // Correct file path
+    const seriesIndexCsvPath = path.join(__dirname, 'files', 'seriesIndex.csv');
+    const seriesCsvPath = path.join(__dirname, 'files', 'series.csv');
 
     try {
         const rows = [];
@@ -39,13 +41,12 @@ const csvParser = require('csv-parser');
     }
 
     async function executeScript(seriesUrl, seriesTag) {
-        const seriesCsvPath = 'series.csv';
-
         const seriesCsvWriter = createCsvWriter({
             path: seriesCsvPath,
             header: [
                 { id: 'Title', title: 'Title' },
-                { id: 'SeriesTag', title: 'SeriesTag' }
+                { id: 'SeriesTag', title: 'SeriesTag' },
+                { id: 'DateRecorded', title: 'DateRecorded' }
             ],
             append: true // Append new rows to the file
         });
@@ -62,7 +63,6 @@ const csvParser = require('csv-parser');
             const seriesTitles = await page.evaluate(() => {
                 const titleElements = document.querySelectorAll('h1, h2, h3, h4, h5, h6, strong, em');
                 const titles = Array.from(titleElements).map(el => el.textContent.trim());
-                console.log('Extracted titles:', titles); // Debugging log
 
                 // Find the index of "Films in this Program"
                 const startIndex = titles.findIndex(title => title.toUpperCase() === 'FILMS IN THIS PROGRAM');
@@ -75,15 +75,14 @@ const csvParser = require('csv-parser');
 
             // Filter out empty or whitespace-only titles and skip "?????? CINEMA"
             const filteredTitles = seriesTitles.filter(title => title.trim() !== '' && title !== '?????? CINEMA');
-
             if (filteredTitles.length === 0) {
-                console.warn('No valid titles extracted. Please check the page structure or selector.');
-                return; // Exit if no titles were extracted
+                console.warn('No valid titles extracted. Skipping this series.');
+                return; // Exit early if no valid titles are found
             }
 
             console.log(`Extracted ${filteredTitles.length} valid titles.`);
 
-            // Remove rows with the matching seriesTag only if titles were successfully retrieved
+            // Initialize existingRows as an empty array if series.csv does not exist
             let existingRows = [];
             if (fs.existsSync(seriesCsvPath)) {
                 existingRows = await new Promise((resolve, reject) => {
@@ -95,20 +94,36 @@ const csvParser = require('csv-parser');
                         .on('error', reject);
                 });
 
-                const filteredRows = existingRows.filter(row => row.SeriesTag !== seriesTag);
-                const tempCsvWriter = createCsvWriter({
-                    path: seriesCsvPath,
-                    header: [
-                        { id: 'Title', title: 'Title' },
-                        { id: 'SeriesTag', title: 'SeriesTag' }
-                    ]
-                });
-
-                await tempCsvWriter.writeRecords(filteredRows);
-                console.log(`Removed rows with SeriesTag "${seriesTag}" from ${seriesCsvPath}.`);
+                // Filter out empty rows
+                existingRows = existingRows.filter(row => row.Title && row.SeriesTag);
             }
 
-            const seriesRecords = filteredTitles.map(title => ({ Title: title, SeriesTag: seriesTag })); // Include seriesTag
+            // Remove rows with the matching seriesTag only if titles were successfully retrieved
+            const filteredRows = existingRows.filter(row => row.SeriesTag !== seriesTag);
+            const tempCsvWriter = createCsvWriter({
+                path: seriesCsvPath,
+                header: [
+                    { id: 'Title', title: 'Title' },
+                    { id: 'SeriesTag', title: 'SeriesTag' },
+                    { id: 'DateRecorded', title: 'DateRecorded' }
+                ]
+            });
+
+            await tempCsvWriter.writeRecords(filteredRows);
+            console.log(`Removed rows with SeriesTag "${seriesTag}" from ${seriesCsvPath}.`);
+
+            const currentTimestamp = new Date().toISOString();
+            const seriesRecords = filteredTitles.map(title => ({
+                Title: title,
+                SeriesTag: seriesTag,
+                DateRecorded: currentTimestamp
+            })); // Include seriesTag and timestamp
+
+            if (seriesRecords.length === 0) {
+                console.log('No new records to write for this series.');
+                return;
+            }
+
             await seriesCsvWriter.writeRecords(seriesRecords);
             console.log('series.csv updated successfully.');
         } catch (error) {
