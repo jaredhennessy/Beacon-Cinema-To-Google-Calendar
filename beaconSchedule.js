@@ -3,16 +3,40 @@ const fs = require('fs');
 const path = require('path'); // Use path for relative paths
 const { execSync } = require('child_process'); // Import child_process to execute scripts
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
+const readline = require('readline'); // Import readline for user input
 
 (async () => {
-    // Execute beaconSeries.js
-    try {
-        console.log('Executing beaconSeries.js...');
-        execSync('node ./beaconSeries.js', { stdio: 'inherit' }); // Use relative path
-        console.log('beaconSeries.js executed successfully.');
-    } catch (error) {
-        console.error('Error executing beaconSeries.js:', error.message);
-        return; // Exit if beaconSeries.js fails
+    // Prompt the user to decide whether to execute beaconSeries.js
+    const shouldUpdateSeries = await new Promise((resolve) => {
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout,
+        });
+
+        const timeout = setTimeout(() => {
+            console.log('No input received. Executing Beacon Film Series update.');
+            rl.close();
+            resolve(true); // Default to executing beaconSeries.js after timeout
+        }, 5000); // 5-second timeout
+
+        rl.question('Do you want to update the Beacon Film Series file? (Y/N): ', (answer) => {
+            clearTimeout(timeout);
+            rl.close();
+            resolve(answer.trim().toUpperCase() === 'Y');
+        });
+    });
+
+    if (shouldUpdateSeries) {
+        try {
+            console.log('Executing beaconSeries.js...');
+            execSync('node ./beaconSeries.js', { stdio: 'inherit' }); // Use relative path
+            console.log('beaconSeries.js executed successfully.');
+        } catch (error) {
+            console.error('Error executing beaconSeries.js:', error.message);
+            return; // Exit if beaconSeries.js fails
+        }
+    } else {
+        console.log('Skipping Beacon Film Series update.');
     }
 
     const calendarUrl = 'https://thebeacon.film/calendar';
@@ -140,7 +164,8 @@ const createCsvWriter = require('csv-writer').createObjectCsvWriter;
             .map(event => ({
                 ...event,
                 seriesTag: seriesMap.get(normalizeTitle(event.title)) || '', // Lookup seriesTag from series.csv or leave blank
-                dateRecorded: currentTimestamp // Populate with the current timestamp
+                dateRecorded: currentTimestamp, // Populate with the current timestamp
+                url: event.url
             }));
 
         // Write the final schedule to schedule.csv

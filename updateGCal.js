@@ -11,8 +11,31 @@ dotenv.config();
 
 const SCOPES = ['https://www.googleapis.com/auth/calendar'];
 const TOKEN_PATH = 'token.json';
-const SCHEDULE_CSV_PATH = 'schedule.csv';
+const SCHEDULE_CSV_PATH = 'files/schedule.csv';
 const TIME_ZONE = process.env.TIME_ZONE || 'America/Los_Angeles'; // Default to America/Los_Angeles
+
+/**
+ * Formats a string by capitalizing the first letter of each word,
+ * skipping quotation marks and special characters, and removing any
+ * quotation marks at the beginning or end of the string.
+ * @param {string} str - The string to format.
+ * @returns {string} - The formatted string.
+ */
+function formatString(str) {
+    return str
+        .replace(/^"|"$/g, '') // Remove quotation marks at the beginning or end
+        .split(' ')
+        .map(word => {
+            const firstCharIndex = [...word].findIndex(char => char.match(/[a-zA-Z]/));
+            if (firstCharIndex === -1) return word; // No alphabetic character found
+            return (
+                word.slice(0, firstCharIndex) + // Preserve leading non-alphabetic characters
+                word.charAt(firstCharIndex).toUpperCase() + // Capitalize the first alphabetic character
+                word.slice(firstCharIndex + 1).toLowerCase() // Lowercase the rest of the word
+            );
+        })
+        .join(' ');
+}
 
 async function connectToCalendar() {
     try {
@@ -50,17 +73,37 @@ async function connectToCalendar() {
         // Initialize the Calendar API
         const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
 
-        // Delete all upcoming events
-        await deleteUpcomingEvents(calendar);
+        // Load seriesIndex.csv into a map for quick lookup
+        const seriesIndexPath = 'files/seriesIndex.csv';
+        const seriesMap = new Map();
 
-        // Read the first five records from schedule.csv and create events
+        await new Promise((resolve, reject) => {
+            fs.createReadStream(seriesIndexPath)
+                .pipe(csv())
+                .on('data', (row) => {
+                    if (row.seriesTag && row.seriesName) {
+                        seriesMap.set(row.seriesTag.trim(), row.seriesName.trim());
+                    }
+                })
+                .on('end', resolve)
+                .on('error', reject);
+        });
+
+        // Read schedule.csv and create events
         const eventsToCreate = [];
+        const today = new Date().toISOString().split('T')[0]; // Get today's date in YYYY-MM-DD format
         await new Promise((resolve, reject) => {
             fs.createReadStream(SCHEDULE_CSV_PATH)
                 .pipe(csv())
                 .on('data', (row) => {
                     if (!row.Date || !row.Time || !row.Title) {
                         console.error(`Skipping invalid row: ${JSON.stringify(row)}`);
+                        return;
+                    }
+
+                    // Skip events with a start date earlier than today
+                    if (row.Date < today) {
+                        console.log(`Skipping past event: ${row.Title} on ${row.Date}`);
                         return;
                     }
 
@@ -79,13 +122,37 @@ async function connectToCalendar() {
                               .split('T')[0] // Extract the date in YYYY-MM-DD format
                         : row.Date;
 
+                    let formattedTitle = '';
+                    formattedTitle = formatString(row.Title); // Apply formatString to Title
+                    
+                    // Look up seriesName using seriesTag and reformat it
+                    let formattedSeriesName = '';
+                    if (row.SeriesTag && seriesMap.has(row.SeriesTag)) {
+                        formattedSeriesName = formatString(seriesMap.get(row.SeriesTag)); // Apply formatString to seriesName
+                    }
+
                     // Log the record and calculated values for troubleshooting
-                    console.log(`Processing record:`, row);
+                    console.log(`Processing record:`, {
+                        ...row,
+                        formattedTitle,
+                        formattedSeriesName,
+                    });
                     console.log(`Calculated endDate: ${endDate}, endTime: ${endTime}`);
 
                     try {
+                        
+                        // Build the description dynamically
+                        const descriptionParts = [];
+                        if (formattedSeriesName) {
+                            descriptionParts.push(`Film Series: ${formattedSeriesName}`);
+                        }
+                        if (row.URL) {
+                            descriptionParts.push(`URL: ${row.URL}`);
+                        }
+                        const description = descriptionParts.join('\n'); // Combine parts with a newline
+
                         eventsToCreate.push({
-                            summary: row.Title,
+                            summary: formattedTitle, // Use formatted title
                             start: {
                                 dateTime: new Date(`${row.Date}T${row.Time}`).toISOString(),
                                 timeZone: TIME_ZONE,
@@ -94,7 +161,8 @@ async function connectToCalendar() {
                                 dateTime: new Date(`${endDate}T${endTime}`).toISOString(),
                                 timeZone: TIME_ZONE,
                             },
-                            description: `Lynchian: ${row.Lynchian}\nURL: ${row.URL}`,
+                            location: "The Beacon Cinema, 4405 Rainier Ave S, Seattle, WA 98118, USA", // Set location
+                            description, // Use dynamically built description
                         });
                     } catch (error) {
                         console.error(`Error processing record:`, row);
@@ -105,8 +173,45 @@ async function connectToCalendar() {
                 .on('error', reject);
         });
 
+        // Verify eventsToCreate contains at least one legitimate record
+        if (eventsToCreate.length === 0) {
+            console.error('No valid events to create. Exiting without deleting existing events.');
+            return;
+        }
+
+        // Prompt the user for the number of events to create
+        const limitedEventsToCreate = await new Promise((resolve) => {
+            const rl = readline.createInterface({
+                input: process.stdin,
+                output: process.stdout,
+            });
+
+            const timeout = setTimeout(() => {
+                console.log('No input received. Creating all events.');
+                rl.close();
+                resolve(eventsToCreate); // No limit
+            }, 5000); // 5-second timeout
+
+            rl.question('Enter the number of events to create (or press Enter for all): ', (answer) => {
+                clearTimeout(timeout);
+                rl.close();
+                const limit = parseInt(answer, 10);
+                if (!isNaN(limit) && limit > 0) {
+                    resolve(eventsToCreate.slice(0, limit)); // Limit the number of events
+                } else {
+                    console.log('Invalid input or no input provided. Creating all events.');
+                    resolve(eventsToCreate); // No limit
+                }
+            });
+        });
+
+        console.log(`Creating ${limitedEventsToCreate.length} events.`);
+
+        // Delete all upcoming events
+        await deleteUpcomingEvents(calendar);
+
         console.log('Creating events from schedule.csv...');
-        for (const event of eventsToCreate) {
+        for (const event of limitedEventsToCreate) {
             try {
                 await calendar.events.insert({
                     calendarId: process.env.CALENDAR_ID,
@@ -117,9 +222,9 @@ async function connectToCalendar() {
                 console.error(`Failed to create event: ${event.summary}`, error.message);
             }
         }
+        
+        console.log('All events created successfully!');
 
-        // Fetch and display the next 10 events
-        await listUpcomingEvents(calendar);
     } catch (error) {
         console.error('Error connecting to the calendar:', error.message);
     }
@@ -128,11 +233,12 @@ async function connectToCalendar() {
 async function deleteUpcomingEvents(calendar) {
     try {
         const calendarId = process.env.CALENDAR_ID;
+        const today = new Date().toISOString(); // Get today's date and time in ISO format
 
         // Fetch all upcoming events
         const eventsResponse = await calendar.events.list({
             calendarId,
-            timeMin: new Date().toISOString(),
+            timeMin: today, // Only fetch events starting from today
             singleEvents: true,
             orderBy: 'startTime',
         });
@@ -157,32 +263,6 @@ async function deleteUpcomingEvents(calendar) {
         }
     } catch (error) {
         console.error('Error deleting upcoming events:', error.message);
-    }
-}
-
-async function listUpcomingEvents(calendar) {
-    try {
-        const calendarId = process.env.CALENDAR_ID;
-        const eventsResponse = await calendar.events.list({
-            calendarId,
-            timeMin: new Date().toISOString(),
-            maxResults: 10,
-            singleEvents: true,
-            orderBy: 'startTime',
-        });
-
-        const events = eventsResponse.data.items;
-        if (events.length) {
-            console.log('Upcoming 10 events:');
-            events.forEach((event, i) => {
-                const start = event.start.dateTime || event.start.date; // Use dateTime or fallback to date
-                console.log(`${i + 1}. ${event.summary} (${start})`);
-            });
-        } else {
-            console.log('No upcoming events found.');
-        }
-    } catch (error) {
-        console.error('Error fetching upcoming events:', error.message);
     }
 }
 
