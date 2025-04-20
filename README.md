@@ -116,7 +116,7 @@ This project automates the process of scraping event data from [The Beacon Cinem
    - Download the `credentials.json` file and place it in the project directory.
 3. Set up your `.env` file:
    - Add your `CALENDAR_ID` (found in your Google Calendar settings).
-   - Add the `OAUTH2_REDIRECT_URI` (e.g., `http://localhost:3000`).
+   - Add the `OAUTH2_REDIRECT_URI` (e.g., `http://localhost:3000` for scripts running locally or the URI of the server hosting these scripts).
 
 ### Installing Dependencies
 
@@ -169,10 +169,9 @@ npm install
 The `.env` file should include the following variables:
 
 ```properties
-API_KEY=your_google_api_key
 CALENDAR_ID=your_calendar_id
+OAUTH2_REDIRECT_URI=your_redirect_uri
 TIME_ZONE=your_time_zone
-OAUTH2_REDIRECT_URI=http://localhost:3000
 ```
 
 ---
