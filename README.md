@@ -73,7 +73,7 @@ This project automates the process of scraping event data from [The Beacon Cinem
    ?????? CINEMA,2025-04-23,19:30,https://thebeacon.film/calendar/movie/blindfold,secret,2025-04-20T00:21:09.620Z
    ```
 
---- 
+---
 
 ## Setup Instructions
 
@@ -104,7 +104,7 @@ Run the following command to install required packages:
 npm install
 ```
 
---- 
+---
 
 ## Running the Scripts
 
@@ -132,7 +132,7 @@ npm install
 
    Follow the OAuth2 authorization flow if prompted. You will be asked how many events to create or can press Enter to create all events.
 
---- 
+---
 
 ## Environment Variables
 
@@ -145,7 +145,7 @@ TIME_ZONE=your_time_zone
 OAUTH2_REDIRECT_URI=http://localhost:3000
 ```
 
---- 
+---
 
 ## References
 
@@ -153,7 +153,7 @@ OAUTH2_REDIRECT_URI=http://localhost:3000
 - [Google Cloud Console](https://console.cloud.google.com/)
 - [Puppeteer Documentation](https://pptr.dev/)
 
---- 
+---
 
 ## License
 
