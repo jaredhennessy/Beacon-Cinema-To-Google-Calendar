@@ -11,7 +11,7 @@ dotenv.config();
 
 const SCOPES = ['https://www.googleapis.com/auth/calendar'];
 const TOKEN_PATH = 'token.json';
-const SCHEDULE_CSV_PATH = 'files/schedule.csv';
+const SCHEDULE_CSV_PATH = path.join(__dirname, 'files', 'schedule.csv');
 const TIME_ZONE = process.env.TIME_ZONE || 'America/Los_Angeles'; // Default to America/Los_Angeles
 
 /**
@@ -74,7 +74,7 @@ async function connectToCalendar() {
         const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
 
         // Load seriesIndex.csv into a map for quick lookup
-        const seriesIndexPath = 'files/seriesIndex.csv';
+        const seriesIndexPath = path.join(__dirname, 'files', 'seriesIndex.csv');
         const seriesMap = new Map();
 
         await new Promise((resolve, reject) => {

@@ -28,7 +28,19 @@ This project automates the process of scraping event data from [The Beacon Cinem
    - Removes outdated records from `files/schedule.csv` where the event date is in the past.
    - Writes the updated schedule to `files/schedule.csv`.
 
-3. **`updateGCal.js`**  
+3. **`findRuntimes.js`**  
+   Extracts runtime information for events listed in `files/schedule.csv` and updates `files/runtimes.csv`:
+   - Reads `files/schedule.csv` to collect unique URLs for events.
+   - Skips titles already present in `files/runtimes.csv` with a non-empty `Runtime` value.
+   - Browses to each URL and looks for the word "Runtime" on the page, extracting the text from the next `<p>` tag.
+   - Prompts the user to decide whether to replace the existing `files/runtimes.csv`:
+     - If the user chooses to replace, the file is deleted before proceeding.
+     - If the user does not respond within 5 seconds, the script proceeds without replacing the file.
+   - Writes the extracted runtimes to `files/runtimes.csv` with two fields:
+     - `Title`: The title of the event.
+     - `Runtime`: The runtime extracted from the corresponding URL.
+
+4. **`updateGCal.js`**  
    Integrates with the Google Calendar API to manage events based on `files/schedule.csv`:
    - Deletes all upcoming events in the specified Google Calendar.
    - Prompts the user for the number of events to create or defaults to creating all events.
@@ -40,6 +52,8 @@ This project automates the process of scraping event data from [The Beacon Cinem
    - Validates and formats event data before creating events.
 
 ### CSV Files
+
+- All timestamps are in ISO 8601 format.
 
 1. **`files/seriesIndex.csv`**  
    Contains the list of series with their names, URLs, and tags. Example:
@@ -73,7 +87,15 @@ This project automates the process of scraping event data from [The Beacon Cinem
    ?????? CINEMA,2025-04-23,19:30,https://thebeacon.film/calendar/movie/blindfold,secret,2025-04-20T00:21:09.620Z
    ```
 
----
+4. **`files/runtimes.csv`**  
+   Contains runtime information for events listed in `files/schedule.csv`. Example:
+
+   ```csv
+   Title,Runtime
+   THE RED HOUSE,100 minutes
+   CEMETERY OF SPLENDOR,122 minutes
+   RED ROCK WEST,98 minutes
+   ```
 
 ## Setup Instructions
 
@@ -124,7 +146,15 @@ npm install
 
    This will generate or update `files/schedule.csv` with the latest event data.
 
-3. **Update Google Calendar**:
+3. **Extract Runtimes**:
+
+   ```bash
+   node findRuntimes.js
+   ```
+
+   This will extract runtime information for events in `files/schedule.csv` and update `files/runtimes.csv`.
+
+4. **Update Google Calendar**:
 
    ```bash
    node updateGCal.js
