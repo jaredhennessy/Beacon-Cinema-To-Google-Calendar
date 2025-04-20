@@ -18,6 +18,7 @@ const csvParser = require('csv-parser');
                     if (rows.length > 0) {
                         console.log(`Found ${rows.length} series in ${seriesIndexCsvPath}.`);
                         for (const row of rows) {
+                            const seriesName = row.seriesName;
                             const seriesUrl = row.seriesURL;
                             const seriesTag = row.seriesTag;
 
@@ -26,7 +27,7 @@ const csvParser = require('csv-parser');
                                 continue;
                             }
 
-                            console.log(`Processing series: ${row.seriesName}`);
+                            console.log(`Processing series: ${seriesName}`);
                             await executeScript(seriesUrl, seriesTag); // Process each series
                         }
                     } else {
