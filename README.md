@@ -9,14 +9,14 @@ This project automates the process of scraping event data from [The Beacon Cinem
 1. **`beaconSeries.js`**  
    Processes series information from `files/seriesIndex.csv`, scrapes titles from the corresponding URLs, and updates `files/series.csv`:
    - Reads all rows from `files/seriesIndex.csv`.
-   - Scrapes titles from the provided URLs.
+   - For each series, scrapes titles from the provided URL.
    - Updates `files/series.csv` with the latest titles and their associated `SeriesTag`.
    - Removes outdated rows from `files/series.csv` for the same `SeriesTag` before appending new rows.
    - Ensures duplicate titles are not added.
 
 2. **`beaconSchedule.js`**  
    Scrapes event data from The Beacon Film Calendar and updates `files/schedule.csv`:
-   - Prompts the user to decide whether to execute `beaconSeries.js` to ensure `files/series.csv` is up-to-date.
+   - Prompts the user to decide whether to execute `beaconSeries.js` to ensure `files/series.csv` is up-to-date (defaults to yes after 5 seconds).
    - Scrapes event data from the website, including:
      - Title
      - Date
@@ -25,28 +25,25 @@ This project automates the process of scraping event data from [The Beacon Cinem
    - Filters out events with the title `"RENT THE BEACON"`.
    - Matches titles with `SeriesTag` from `files/series.csv`.
    - Adds a `DateRecorded` timestamp to each record.
-   - Removes future screenings from `files/schedule.csv` before writing new data.
+   - Removes **past** screenings from `files/schedule.csv` before writing new data.
    - Writes the updated schedule to `files/schedule.csv`.
 
 3. **`findRuntimes.js`**  
    Extracts runtime information for events listed in `files/schedule.csv` and updates `files/runtimes.csv`:
+   - Prompts the user to decide whether to replace the existing `files/runtimes.csv` (defaults to no after 5 seconds).
    - Reads `files/schedule.csv` to collect unique URLs for events.
    - Skips titles already present in `files/runtimes.csv` with a non-empty `Runtime` value.
-   - Browses to each URL and looks for runtime information on the page, extracting the relevant text.
-   - Prompts the user to decide whether to replace the existing `files/runtimes.csv`:
-     - If the user chooses to replace, the file is deleted before proceeding.
-     - If the user does not respond within 5 seconds, the script proceeds without replacing the file.
+   - Uses Puppeteer to browse to each URL and extract runtime information.
    - Writes the extracted runtimes to `files/runtimes.csv` with two fields:
      - `Title`: The title of the event.
      - `Runtime`: The runtime extracted from the corresponding URL.
 
 4. **`updateGCal.js`**  
    Integrates with the Google Calendar API to manage events based on `files/schedule.csv`:
-   - Deletes all upcoming events in the specified Google Calendar.
-   - Prompts the user for the number of events to create or defaults to creating all events.
+   - Deletes all upcoming events in the specified Google Calendar before creating new ones.
    - Creates events based on the records in `files/schedule.csv`, including:
      - Title
-     - Start and end times
+     - Start and end times (end time is always 2 hours after start, possibly rolling over to the next day)
      - Location
      - Description (includes the series name and URL if available).
    - Validates and formats event data before creating events.
@@ -54,10 +51,8 @@ This project automates the process of scraping event data from [The Beacon Cinem
      - The user is directed to a URL to authorize the app.
      - After successful authorization, the token is stored in `token.json`.
      - The script logs the message:  
-       ```
-       Token stored to token.json
-       Please re-run the script now that the token has been created.
-       ```
+       - Token stored to token.json  
+       - Please re-run the script now that the token has been created.
      - The user must re-run the script after the token is generated to proceed with calendar operations.
 
 ### CSV Files

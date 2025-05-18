@@ -38,6 +38,11 @@ function formatString(str) {
         .join(' ');
 }
 
+/**
+ * Main function to connect to Google Calendar, delete all upcoming events,
+ * and create new events based on files/schedule.csv.
+ * Handles OAuth2 authentication and token storage.
+ */
 async function connectToCalendar() {
     try {
         if (!fs.existsSync('credentials.json')) {
@@ -177,6 +182,10 @@ async function connectToCalendar() {
     }
 }
 
+/**
+ * Deletes all upcoming events from the specified Google Calendar.
+ * @param {google.calendar_v3.Calendar} calendar - The Google Calendar API client.
+ */
 async function deleteUpcomingEvents(calendar) {
     try {
         const calendarId = process.env.CALENDAR_ID;
@@ -212,6 +221,12 @@ async function deleteUpcomingEvents(calendar) {
     }
 }
 
+/**
+ * Starts the OAuth2 authorization flow and stores the token in token.json.
+ * Prompts the user to visit a URL and authorize the app.
+ * @param {google.auth.OAuth2} oAuth2Client - The OAuth2 client.
+ * @returns {Promise<void>}
+ */
 async function getAccessToken(oAuth2Client) {
     const authUrl = oAuth2Client.generateAuthUrl({
         access_type: 'offline',
@@ -260,6 +275,13 @@ async function getAccessToken(oAuth2Client) {
     });
 }
 
+/**
+ * Adds a duration (in hours) to a time string (HH:MM).
+ * Returns the new time string and whether the end time is on the next day.
+ * @param {string} time - The start time in HH:MM format.
+ * @param {number} durationHours - The number of hours to add.
+ * @returns {{time: string, nextDay: boolean}}
+ */
 function addDuration(time, durationHours) {
     const timeRegex = /^\d{2}:\d{2}$/;
     if (!timeRegex.test(time)) {

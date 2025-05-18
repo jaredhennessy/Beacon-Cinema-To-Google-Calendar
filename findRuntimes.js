@@ -1,3 +1,12 @@
+/**
+ * This script extracts runtime information for events listed in files/schedule.csv
+ * and updates files/runtimes.csv.
+ * - Prompts the user to decide whether to replace runtimes.csv (5s timeout).
+ * - Reads files/schedule.csv to collect unique URLs for events.
+ * - Skips titles already present in files/runtimes.csv with a non-empty Runtime value.
+ * - Uses Puppeteer to browse to each URL and extract runtime information.
+ * - Writes the extracted runtimes to files/runtimes.csv with fields: Title, Runtime.
+ */
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');

@@ -1,3 +1,13 @@
+/**
+ * This script scrapes event data from The Beacon Film Calendar and updates files/schedule.csv.
+ * - Optionally runs beaconSeries.js to update files/series.csv before scraping.
+ * - Scrapes event titles, dates, times, and URLs from the calendar page.
+ * - Matches titles with SeriesTag from files/series.csv.
+ * - Adds a DateRecorded timestamp to each record.
+ * - Removes past screenings from files/schedule.csv before writing new data.
+ * - Writes the updated schedule to files/schedule.csv.
+ */
+
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path'); // Use path for relative paths
@@ -6,7 +16,8 @@ const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 const readline = require('readline'); // Import readline for user input
 
 (async () => {
-    // Prompt the user to decide whether to execute beaconSeries.js
+    // Prompt the user to decide whether to execute beaconSeries.js.
+    // If no input is received within 5 seconds, defaults to running beaconSeries.js.
     const shouldUpdateSeries = await new Promise((resolve) => {
         const rl = readline.createInterface({
             input: process.stdin,
@@ -28,6 +39,7 @@ const readline = require('readline'); // Import readline for user input
 
     if (shouldUpdateSeries) {
         try {
+            // Run beaconSeries.js to update series.csv before scraping schedule.
             console.log('Executing beaconSeries.js...');
             execSync('node ./beaconSeries.js', { stdio: 'inherit' }); // Use relative path
             console.log('beaconSeries.js executed successfully.');
@@ -55,7 +67,11 @@ const readline = require('readline'); // Import readline for user input
         ]
     });
 
-    const normalizeTitle = title => title.replace(/^"|"$/g, '').trim().toLowerCase(); // Helper function to normalize titles
+    /**
+     * Helper function to normalize titles for comparison.
+     * Removes leading/trailing quotes, trims, and lowercases.
+     */
+    const normalizeTitle = title => title.replace(/^"|"$/g, '').trim().toLowerCase();
 
     let browser;
     try {

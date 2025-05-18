@@ -1,3 +1,13 @@
+/**
+ * This script processes series information from files/seriesIndex.csv,
+ * scrapes film titles from each series URL, and updates files/series.csv.
+ * - Reads all rows from files/seriesIndex.csv.
+ * - For each series, scrapes titles from the provided URL.
+ * - Updates files/series.csv with the latest titles and their associated SeriesTag.
+ * - Removes outdated rows from files/series.csv for the same SeriesTag before appending new rows.
+ * - Ensures duplicate titles are not added.
+ */
+
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path'); // Use path for relative paths
@@ -42,6 +52,9 @@ const csvParser = require('csv-parser');
     }
 
     async function executeScript(seriesUrl, seriesTag) {
+        // Writes new series records to series.csv, removing any previous records for the same SeriesTag.
+        // Each record includes Title, SeriesTag, and DateRecorded.
+
         const seriesCsvWriter = createCsvWriter({
             path: seriesCsvPath,
             header: [
