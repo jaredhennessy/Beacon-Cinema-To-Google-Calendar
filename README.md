@@ -25,14 +25,14 @@ This project automates the process of scraping event data from [The Beacon Cinem
    - Filters out events with the title `"RENT THE BEACON"`.
    - Matches titles with `SeriesTag` from `files/series.csv`.
    - Adds a `DateRecorded` timestamp to each record.
-   - Removes outdated records from `files/schedule.csv` where the event date is in the past.
+   - Removes future screenings from `files/schedule.csv` before writing new data.
    - Writes the updated schedule to `files/schedule.csv`.
 
 3. **`findRuntimes.js`**  
    Extracts runtime information for events listed in `files/schedule.csv` and updates `files/runtimes.csv`:
    - Reads `files/schedule.csv` to collect unique URLs for events.
    - Skips titles already present in `files/runtimes.csv` with a non-empty `Runtime` value.
-   - Browses to each URL and looks for the word "Runtime" on the page, extracting the text from the next `<p>` tag.
+   - Browses to each URL and looks for runtime information on the page, extracting the relevant text.
    - Prompts the user to decide whether to replace the existing `files/runtimes.csv`:
      - If the user chooses to replace, the file is deleted before proceeding.
      - If the user does not respond within 5 seconds, the script proceeds without replacing the file.
@@ -50,10 +50,19 @@ This project automates the process of scraping event data from [The Beacon Cinem
      - Location
      - Description (includes the series name and URL if available).
    - Validates and formats event data before creating events.
+   - If no token is found in `token.json`, the script starts the OAuth2 authorization flow:
+     - The user is directed to a URL to authorize the app.
+     - After successful authorization, the token is stored in `token.json`.
+     - The script logs the message:  
+       ```
+       Token stored to token.json
+       Please re-run the script now that the token has been created.
+       ```
+     - The user must re-run the script after the token is generated to proceed with calendar operations.
 
 ### CSV Files
 
-- All timestamps are in ISO 8601 format.
+All timestamps are in ISO 8601 format.
 
 1. **`files/seriesIndex.csv`**  
    Contains the list of series with their names, URLs, and tags. Example:
@@ -84,7 +93,6 @@ This project automates the process of scraping event data from [The Beacon Cinem
    THE RED HOUSE,2025-04-20,17:00,https://thebeacon.film/calendar/movie/the-red-house,lynchian,2025-04-20T00:21:09.620Z
    DAVID LYNCH’S RONNIE ROCKET: A LIVE TABLE READ,2025-04-27,17:00,https://thebeacon.film/calendar/movie/david-lynchs-ronnie-rocket-a-live-table-read,davidlynch,2025-04-20T00:21:09.620Z
    LAW AND ORDER,2025-05-14,19:30,https://thebeacon.film/calendar/movie/law-and-order,wiseman,2025-04-20T00:21:09.620Z
-   ?????? CINEMA,2025-04-23,19:30,https://thebeacon.film/calendar/movie/blindfold,secret,2025-04-20T00:21:09.620Z
    ```
 
 4. **`files/runtimes.csv`**  
@@ -160,7 +168,7 @@ npm install
    node updateGCal.js
    ```
 
-   Follow the OAuth2 authorization flow if prompted. You will be asked how many events to create or can press Enter to create all events.
+   This will update the designated Google Calendar or run the authorization process if necessary.
 
 ---
 
