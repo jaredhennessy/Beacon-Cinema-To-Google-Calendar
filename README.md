@@ -1,192 +1,179 @@
-# Beacon Cinema to Google Calendar
+# Beacon Cinema Calendar Sync
 
-This project automates the process of scraping event data from [The Beacon Cinema Film Calendar](https://thebeacon.film/calendar) and updating a Google Calendar with the scraped events.
+This project automates scraping [The Beacon Cinema](https://thebeacon.film/calendar) schedule and syncing it to Google Calendar, including runtime information and film series details.
 
-## Codebase Overview
+## Features
 
-### Scripts
+- Scrapes film series information and member films from series pages.
+- Extracts film schedules and runtimes.
+- Syncs with Google Calendar, including:
+  - Film titles with proper capitalization
+  - Runtime information
+  - Film series groupings
+  - Venue location
+  - Links to film pages
+- Interactive execution with timeouts.
+- Comprehensive error handling and logging.
+- Deduplication of events and data.
 
-1. **`beaconSeries.js`**  
-   Processes series information from `files/seriesIndex.csv`, scrapes titles from the corresponding URLs, and updates `files/series.csv`:
-   - Reads all rows from `files/seriesIndex.csv`.
-   - For each series, scrapes titles from the provided URL.
-   - Updates `files/series.csv` with the latest titles and their associated `SeriesTag`.
-   - Removes outdated rows from `files/series.csv` for the same `SeriesTag` before appending new rows.
-   - Ensures duplicate titles are not added.
+## Prerequisites
 
-2. **`beaconSchedule.js`**  
-   Scrapes event data from The Beacon Film Calendar and updates `files/schedule.csv`:
-   - Prompts the user to decide whether to execute `beaconSeries.js` to ensure `files/series.csv` is up-to-date (defaults to yes after 5 seconds).
-   - Scrapes event data from the website, including:
-     - Title
-     - Date
-     - Time
-     - URL
-   - Filters out events with the title `"RENT THE BEACON"`.
-   - Matches titles with `SeriesTag` from `files/series.csv`.
-   - Adds a `DateRecorded` timestamp to each record.
-   - Removes **past** screenings from `files/schedule.csv` before writing new data.
-   - Writes the updated schedule to `files/schedule.csv`.
+- Node.js 14 or higher
+- A Google Cloud project with:
+  - Calendar API enabled
+  - OAuth 2.0 credentials configured
+- Access to modify a Google Calendar
 
-3. **`findRuntimes.js`**  
-   Extracts runtime information for events listed in `files/schedule.csv` and updates `files/runtimes.csv`:
-   - Prompts the user to decide whether to replace the existing `files/runtimes.csv` (defaults to no after 5 seconds).
-   - Reads `files/schedule.csv` to collect unique URLs for events.
-   - Skips titles already present in `files/runtimes.csv` with a non-empty `Runtime` value.
-   - Uses Puppeteer to browse to each URL and extract runtime information.
-   - Writes the extracted runtimes to `files/runtimes.csv` with two fields:
-     - `Title`: The title of the event.
-     - `Runtime`: The runtime extracted from the corresponding URL.
+## Installation
 
-4. **`updateGCal.js`**  
-   Integrates with the Google Calendar API to manage events based on `files/schedule.csv`:
-   - Deletes all upcoming events in the specified Google Calendar before creating new ones.
-   - Creates events based on the records in `files/schedule.csv`, including:
-     - Title
-     - Start and end times (end time is always 2 hours after start, possibly rolling over to the next day)
-     - Location
-     - Description (includes the series name and URL if available).
-   - Validates and formats event data before creating events.
-   - If no token is found in `token.json`, the script starts the OAuth2 authorization flow:
-     - The user is directed to a URL to authorize the app.
-     - After successful authorization, the token is stored in `token.json`.
-     - The script logs the message:  
-       - Token stored to token.json  
-       - Please re-run the script now that the token has been created.
-     - The user must re-run the script after the token is generated to proceed with calendar operations.
+1. Clone the repository:
 
-### CSV Files
+    ```bash
+    git clone <repository_url>
+    cd jcal
+    ```
 
-All timestamps are in ISO 8601 format.
+2. Install dependencies:
 
-1. **`files/seriesIndex.csv`**  
-   Contains the list of series with their names, URLs, and tags. Example:
+    ```bash
+    npm install
+    ```
 
-   ```csv
-   seriesName,seriesURL,seriesTag
-   "THE ABSURD MYSTERY OF THE STRANGE FORCES OF EXISTENCE: ""LYNCHIAN"" CINEMA",https://thebeacon.film/programs/entry/the-absurd-mystery-of-the-strange-forces-of-existence-lynchian-cinema,lynchian
-   TO LIVE IS TO DREAM: A NORTHWEST TRIBUTE TO DAVID LYNCH,https://thebeacon.film/programs/entry/to-live-is-to-dream-a-northwest-tribute-to-david-lynch,davidlynch
-   THE FILMS OF FREDERICK WISEMAN,https://thebeacon.film/programs/entry/the-films-of-frederick-wiseman,wiseman
-   "Seattle's premiere ""blindfolded"" screening series",https://thebeacon.film/calendar/movie/blindfold,secret
-   ```
+## Configuration
 
-2. **`files/series.csv`**  
-   Stores titles and their associated `SeriesTag` scraped from the URLs in `files/seriesIndex.csv`. Example:
+1. **Google Cloud Project Setup**:
+    - Go to [Google Cloud Console](https://console.cloud.google.com/).
+    - Enable the Calendar API.
+    - Create OAuth 2.0 credentials:
+        - Go to "Credentials" and click "Create Credentials" > "OAuth 2.0 Client IDs".
+        - Set the "Application type" to "Web application".
+        - Set the redirect URI to `http://localhost:3000`.
+        - Download the credentials as `credentials.json` and place it in the project root.
 
-   ```csv
-   Title,SeriesTag,DateRecorded
-   THE RED HOUSE,lynchian,2025-04-20T00:20:53.541Z
-   DAVID LYNCH’S RONNIE ROCKET: A LIVE TABLE READ,davidlynch,2025-04-20T00:20:57.176Z
-   LAW AND ORDER,wiseman,2025-04-20T00:20:59.918Z
-   ```
+2. **Environment Configuration**:
+    - Create a `.env` file in the project root with the following content:
 
-3. **`files/schedule.csv`**  
-   Contains the final schedule of events scraped from The Beacon Film Calendar. Example:
+        ```env
+        CALENDAR_ID=your_calendar_id
+        OAUTH2_REDIRECT_URI=http://localhost:3000
+        TIME_ZONE=America/Los_Angeles
+        ```
 
-   ```csv
-   Title,Date,Time,URL,SeriesTag,DateRecorded
-   THE RED HOUSE,2025-04-20,17:00,https://thebeacon.film/calendar/movie/the-red-house,lynchian,2025-04-20T00:21:09.620Z
-   DAVID LYNCH’S RONNIE ROCKET: A LIVE TABLE READ,2025-04-27,17:00,https://thebeacon.film/calendar/movie/david-lynchs-ronnie-rocket-a-live-table-read,davidlynch,2025-04-20T00:21:09.620Z
-   LAW AND ORDER,2025-05-14,19:30,https://thebeacon.film/calendar/movie/law-and-order,wiseman,2025-04-20T00:21:09.620Z
-   ```
+        Replace `your_calendar_id` with the ID of the Google Calendar you want to update.
 
-4. **`files/runtimes.csv`**  
-   Contains runtime information for events listed in `files/schedule.csv`. Example:
+3. **Create `files` Directory**:
 
-   ```csv
-   Title,Runtime
-   THE RED HOUSE,100 minutes
-   CEMETERY OF SPLENDOR,122 minutes
-   RED ROCK WEST,98 minutes
-   ```
+    ```bash
+    mkdir files
+    ```
 
-## Setup Instructions
+4. **Set up `files/seriesIndex.csv`**:
+    - This file contains the list of series with their names, URLs, and tags.
 
-### Prerequisites
+        ```csv
+        seriesName,seriesURL,seriesTag
+        "Series Name","https://thebeacon.film/programs/entry/series-url","tag"
+        ```
 
-1. **Node.js**: Install [Node.js](https://nodejs.org/).
-2. **Google Cloud Project**: Create a project in the [Google Cloud Console](https://console.cloud.google.com/).
+## Usage
 
-### Setting Up the Google Calendar API
+### Full Update Pipeline
 
-1. Enable the **Google Calendar API** for your project:
-   - Go to the [Google Calendar API page](https://console.cloud.google.com/apis/library/calendar.googleapis.com).
-   - Click "Enable".
-2. Create OAuth2 credentials:
-   - Go to the [Credentials page](https://console.cloud.google.com/apis/credentials).
-   - Click "Create Credentials" > "OAuth 2.0 Client IDs".
-   - Set the redirect URI to `http://localhost:3000` (for scripts running locally or the URI of the server hosting these scripts).
-   - Download the `credentials.json` file and place it in the project directory.
-3. Set up your `.env` file:
-   - Add your `CALENDAR_ID` (found in your Google Calendar settings).
-   - Add the `OAUTH2_REDIRECT_URI` (e.g., `http://localhost:3000` for scripts running locally or the URI of the server hosting these scripts).
-
-### Installing Dependencies
-
-Run the following command to install required packages:
+Run the complete update process:
 
 ```bash
-npm install
+node fullUpdate.js
 ```
 
----
+This script sequentially executes the following steps:
 
-## Running the Scripts
+1. `beaconSeries.js` - Updates film series data.
+2. `beaconSchedule.js` - Scrapes the current schedule.
+3. `findRuntimes.js` - Extracts runtime information.
+4. `updateGCal.js` - Updates Google Calendar.
 
-1. **Process Series Information**:
+Each step prompts for confirmation with a 5-second timeout (defaults to yes).
 
-   ```bash
-   node beaconSeries.js
-   ```
+### Individual Scripts
 
-   This will update `files/series.csv` with the latest titles for each series.
+#### Film Series Update
 
-2. **Scrape Event Data**:
-
-   ```bash
-   node beaconSchedule.js
-   ```
-
-   This will generate or update `files/schedule.csv` with the latest event data.
-
-3. **Extract Runtimes**:
-
-   ```bash
-   node findRuntimes.js
-   ```
-
-   This will extract runtime information for events in `files/schedule.csv` and update `files/runtimes.csv`.
-
-4. **Update Google Calendar**:
-
-   ```bash
-   node updateGCal.js
-   ```
-
-   This will update the designated Google Calendar or run the authorization process if necessary.
-
----
-
-## Environment Variables
-
-The `.env` file should include the following variables:
-
-```properties
-CALENDAR_ID=your_calendar_id
-OAUTH2_REDIRECT_URI=your_redirect_uri
-TIME_ZONE=your_time_zone
+```bash
+node beaconSeries.js
 ```
 
----
+- Scrapes film titles from series pages.
+- Updates `files/series.csv`.
+- Removes outdated entries.
 
-## References
+#### Schedule Update
 
-- [Google Calendar API Documentation](https://developers.google.com/calendar)
-- [Google Cloud Console](https://console.cloud.google.com/)
-- [Puppeteer Documentation](https://pptr.dev/)
+```bash
+node beaconSchedule.js
+```
 
----
+- Scrapes the current calendar.
+- Updates `files/schedule.csv`.
+- Removes past screenings.
+- Matches films to series.
+
+#### Runtime Information
+
+```bash
+node findRuntimes.js
+```
+
+- Prompts to replace or update `files/runtimes.csv`.
+- Extracts runtime from film pages.
+- Skips already processed films.
+
+#### Calendar Sync
+
+```bash
+node updateGCal.js
+```
+
+- Deletes all upcoming events.
+- Creates new events with:
+  - Proper title formatting
+  - Runtime information
+  - Series grouping
+  - Venue location
+  - Film page URL
+- Handles OAuth2 flow if needed.
+
+## File Structure
+
+### Input Files
+
+- `credentials.json`: Google OAuth2 credentials.
+- `.env`: Environment configuration.
+- `files/seriesIndex.csv`: Film series definitions.
+
+### Working Files
+
+- `files/series.csv`: Film-to-series relationships.
+- `files/schedule.csv`: Current film schedule.
+- `files/runtimes.csv`: Film runtime information.
+- `token.json`: Google OAuth2 tokens.
+
+## Error Handling
+
+- All scripts include detailed error logging.
+- Authentication troubleshooting guidance.
+- CSV header validation.
+- Duplicate detection.
+- Missing file/directory checks.
+
+## Notes
+
+- The OAuth2 server runs on port 3000 by default.
+- First run requires Google Calendar authorization.
+- All dates/times use ISO 8601 format.
+- Films without runtimes default to 2-hour events.
+- Past events are automatically removed.
+- Duplicate events are automatically deduplicated.
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0. See the [LICENSE](LICENSE) file for details.
+GNU General Public License v3.0

@@ -1,59 +1,49 @@
 /**
- * This script scrapes event data from The Beacon Film Calendar and updates files/schedule.csv.
+ * beaconSchedule.js
+ * Scrapes event data from The Beacon Film Calendar and updates files/schedule.csv.
+ * Usage: node beaconSchedule.js
  * - Optionally runs beaconSeries.js to update files/series.csv before scraping.
  * - Scrapes event titles, dates, times, and URLs from the calendar page.
  * - Matches titles with SeriesTag from files/series.csv.
  * - Adds a DateRecorded timestamp to each record.
  * - Removes past screenings from files/schedule.csv before writing new data.
  * - Writes the updated schedule to files/schedule.csv.
+ * - Ensures header rows in all CSVs.
+ * Dependencies: puppeteer, csv-writer, readline, ./utils.js
  */
 
 const puppeteer = require('puppeteer');
 const fs = require('fs');
-const path = require('path'); // Use path for relative paths
-const { execSync } = require('child_process'); // Import child_process to execute scripts
+const path = require('path');
+const { execSync } = require('child_process');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
-const readline = require('readline'); // Import readline for user input
+const readline = require('readline');
+const { ensureHeader, deduplicateRows } = require('./utils');
+
+process.on('unhandledRejection', (reason) => {
+    console.error('[ERROR] Unhandled promise rejection in beaconSchedule.js:', reason);
+    console.log('[SUMMARY] Total events processed: 0');
+    process.exit(1);
+});
 
 (async () => {
-    // Prompt the user to decide whether to execute beaconSeries.js.
-    // If no input is received within 5 seconds, defaults to running beaconSeries.js.
-    const shouldUpdateSeries = await new Promise((resolve) => {
-        const rl = readline.createInterface({
-            input: process.stdin,
-            output: process.stdout,
-        });
-
-        const timeout = setTimeout(() => {
-            console.log('No input received. Executing Beacon Film Series update.');
-            rl.close();
-            resolve(true); // Default to executing beaconSeries.js after timeout
-        }, 5000); // 5-second timeout
-
-        rl.question('Do you want to update the Beacon Film Series file? (Y/N): ', (answer) => {
-            clearTimeout(timeout);
-            rl.close();
-            resolve(answer.trim().toUpperCase() === 'Y');
-        });
-    });
-
-    if (shouldUpdateSeries) {
-        try {
-            // Run beaconSeries.js to update series.csv before scraping schedule.
-            console.log('Executing beaconSeries.js...');
-            execSync('node ./beaconSeries.js', { stdio: 'inherit' }); // Use relative path
-            console.log('beaconSeries.js executed successfully.');
-        } catch (error) {
-            console.error('Error executing beaconSeries.js:', error.message);
-            return; // Exit if beaconSeries.js fails
-        }
-    } else {
-        console.log('Skipping Beacon Film Series update.');
-    }
+    console.log('[START] beaconSchedule.js');
 
     const calendarUrl = 'https://thebeacon.film/calendar';
     const seriesCsvPath = path.join(__dirname, 'files', 'series.csv');
     const scheduleCsvPath = path.join(__dirname, 'files', 'schedule.csv');
+    const seriesIndexCsvPath = path.join(__dirname, 'files', 'seriesIndex.csv');
+
+    ensureHeader(seriesCsvPath, 'Title,SeriesTag,DateRecorded');
+    ensureHeader(scheduleCsvPath, 'Title,Date,Time,URL,SeriesTag,DateRecorded');
+    ensureHeader(seriesIndexCsvPath, 'seriesName,seriesURL,seriesTag');
+
+    if (!fs.existsSync(seriesCsvPath)) {
+        console.error('[ERROR] files/series.csv is missing. Please run beaconSeries.js first.');
+        console.log('[SUMMARY] Total events processed: 0');
+        console.log('[SUMMARY] beaconSchedule.js finished. Total events processed: 0');
+        return;
+    }
 
     const scheduleCsvWriter = createCsvWriter({
         path: scheduleCsvPath,
@@ -67,86 +57,97 @@ const readline = require('readline'); // Import readline for user input
         ]
     });
 
-    /**
-     * Helper function to normalize titles for comparison.
-     * Removes leading/trailing quotes, trims, and lowercases.
-     */
     const normalizeTitle = title => title.replace(/^"|"$/g, '').trim().toLowerCase();
 
     let browser;
+    let eventsAdded = 0;
     try {
         browser = await puppeteer.launch();
         const page = await browser.newPage();
 
-        // Extract unique titles from the website
-        await page.goto(calendarUrl, { waitUntil: 'networkidle2' });
+        await page.goto(calendarUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+        // Extract event titles from the page
         const titles = await page.evaluate(() => {
             const titleElements = document.querySelectorAll('section[itemprop="name"]');
             const titles = Array.from(titleElements).map(el => el.textContent.trim());
-            return [...new Set(titles)]; // Remove duplicates
+            return [...new Set(titles)];
         });
 
-        // Extract unique titles from the website and preserve original formatting
-        const titleMap = new Map(
-            titles.map(title => [normalizeTitle(title), title.trim()]) // Map normalized title to original title
-        );
+        if (!Array.isArray(titles) || titles.length === 0) {
+            console.info('[INFO] No event titles found on the calendar page.');
+            console.warn('[WARN] No titles found on the calendar page. The website structure may have changed.');
+        }
 
-        // Filter out "RENT THE BEACON"
+        const titleMap = new Map(
+            titles.map(title => [normalizeTitle(title), title.trim()])
+        );
         titleMap.delete(normalizeTitle('RENT THE BEACON'));
 
-        // Read series.csv into a map for quick lookup
-        const seriesMap = new Map(
-            fs.readFileSync(seriesCsvPath, 'utf8')
-                .split('\n')
-                .slice(1) // Skip the header row
-                .map(line => line.split(',').map(field => field.trim())) // Split and trim fields
-                .filter(fields => fields.length >= 3) // Ensure valid rows with three fields
-                .map(([title, seriesTag]) => [normalizeTitle(title), seriesTag]) // Map normalized title to seriesTag
-        );
+        const seriesRows = fs.readFileSync(seriesCsvPath, 'utf8')
+            .split('\n')
+            .slice(1)
+            .map(line => {
+                const fields = line.split(',').map(field => field.trim());
+                if (fields.length < 3) {
+                    console.warn('[WARN] Skipping malformed row in series.csv:', line);
+                    return [];
+                }
+                return fields;
+            })
+            .filter(fields => fields.length >= 3);
 
-        console.log('Extracted titles:', Array.from(titleMap.values()));
+        const seenPairs = new Set();
+        for (const [title, seriesTag] of seriesRows) {
+            const key = `${title}|${seriesTag}`;
+            if (seenPairs.has(key)) {
+                console.warn(`[WARN] Duplicate Title/SeriesTag pair "${title}|${seriesTag}" found in series.csv.`);
+            }
+            seenPairs.add(key);
+        }
+        const seriesMap = new Map(seriesRows.map(([title, seriesTag]) => [normalizeTitle(title), seriesTag]));
 
-        // Extract schedule data from the website
+        console.log('[INFO] Extracted titles:', Array.from(titleMap.values()));
+
+        // Scrape schedule data from the page
         const schedule = await page.evaluate(() => {
             const scheduleList = [];
-
-            // Find all event blocks on the page
             const eventBlocks = document.querySelectorAll('section[itemprop="name"]');
             if (eventBlocks.length === 0) {
-                console.warn('No event blocks found. The website structure may have changed.');
+                console.warn('[WARN] No event blocks found. The website structure may have changed.');
             }
             eventBlocks.forEach(eventBlock => {
                 const title = eventBlock.textContent.trim();
                 const url = eventBlock.closest('a')?.href || '';
-
-                // Find all sibling sections with class="time" and itemprop="startDate"
                 const timeElements = Array.from(eventBlock.parentElement.querySelectorAll('section.time[itemprop="startDate"]'));
                 timeElements.forEach(timeElement => {
                     const startDate = timeElement.getAttribute('content');
                     if (startDate) {
-                        const [date, time] = startDate.split('T'); // Split ISO date-time format into date and time
-                        const formattedDate = date; // Use ISO format yyyy-mm-dd directly
-                        const formattedTime = time.slice(0, 5); // Extract HH:MM from ISO time
-
+                        const [date, time] = startDate.split('T');
+                        const formattedDate = date;
+                        const formattedTime = time.slice(0, 5);
                         scheduleList.push({ title, date: formattedDate, time: formattedTime, url });
                     }
                 });
             });
-
             return scheduleList;
         });
 
-        // Remove records from schedule.csv where the start date is >= today's date
-        const today = new Date().toISOString().split('T')[0]; // Get today's date in YYYY-MM-DD format
+        if (!Array.isArray(schedule) || schedule.length === 0) {
+            console.info('[INFO] No schedule data found on the calendar page.');
+            console.warn('[WARN] No schedule data found on the calendar page. The website structure may have changed.');
+        }
+
+        const today = new Date().toISOString().split('T')[0];
         const existingSchedule = fs.existsSync(scheduleCsvPath)
             ? fs.readFileSync(scheduleCsvPath, 'utf8')
                   .split('\n')
-                  .slice(1) // Skip the header row
-                  .map(line => line.split(',').map(field => field.trim())) // Split and trim fields
-                  .filter(fields => fields.length >= 2) // Ensure valid rows
+                  .slice(1)
+                  .map(line => line.split(',').map(field => field.trim()))
+                  .filter(fields => fields.length >= 2)
             : [];
 
-        const filteredSchedule = existingSchedule.filter(([title, date]) => date < today); // Keep rows with dates < today
+        // Remove future screenings from schedule.csv before writing new data
+        const filteredSchedule = existingSchedule.filter(([title, date]) => date < today);
 
         const tempScheduleCsvWriter = createCsvWriter({
             path: scheduleCsvPath,
@@ -170,34 +171,67 @@ const readline = require('readline'); // Import readline for user input
                 dateRecorded
             }))
         );
+        console.log('[INFO] Removed future screenings from schedule.csv.');
 
-        console.log('Removed future screenings from schedule.csv.');
-
-        // Add seriesTag and dateRecorded fields to schedule, skipping "RENT THE BEACON"
         const currentTimestamp = new Date().toISOString();
         const scheduleWithSeriesTag = schedule
-            .filter(event => event.title !== 'RENT THE BEACON') // Skip records where Title is "RENT THE BEACON"
+            .filter(event => event.title !== 'RENT THE BEACON')
+            .filter(event => event.title && event.date && event.time)
             .map(event => ({
                 ...event,
-                seriesTag: seriesMap.get(normalizeTitle(event.title)) || '', // Lookup seriesTag from series.csv or leave blank
-                dateRecorded: currentTimestamp, // Populate with the current timestamp
+                seriesTag: seriesMap.get(normalizeTitle(event.title)) || '',
+                dateRecorded: currentTimestamp,
                 url: event.url
             }));
 
-        // Write the final schedule to schedule.csv
-        await scheduleCsvWriter.writeRecords(
-            scheduleWithSeriesTag.map(event => ({
-                ...event,
-                title: titleMap.get(normalizeTitle(event.title)) || event.title // Preserve original formatting
-            }))
-        );
-
-        console.log('schedule.csv written successfully.');
-    } catch (error) {
-        console.error('An error occurred:', error);
-    } finally {
-        if (browser) {
-            await browser.close();
+        if (scheduleWithSeriesTag.length === 0) {
+            console.warn('[WARN] All events were skipped due to missing required fields.');
+            console.log('[SUMMARY] No valid events were written to schedule.csv.');
         }
+
+        // Deduplicate events by title/date/time
+        let uniqueEvents = deduplicateRows(scheduleWithSeriesTag, event => `${event.title}|${event.date}|${event.time}`);
+        let duplicateWritten = uniqueEvents.length < scheduleWithSeriesTag.length;
+
+        if (duplicateWritten) {
+            console.warn('[WARN] Duplicate events found in final written schedule.');
+        }
+
+        if (uniqueEvents.length === 0) {
+            console.warn('[WARN] No unique events to write. schedule.csv not updated.');
+            console.log('[SUMMARY] No new events were added to schedule.csv.');
+        } else {
+            await scheduleCsvWriter.writeRecords(
+                uniqueEvents.map(event => ({
+                    ...event,
+                    title: titleMap.get(normalizeTitle(event.title)) || event.title
+                }))
+            );
+            console.log(`[INFO] schedule.csv written successfully. ${uniqueEvents.length} events added.`);
+            // Ensure header after writing
+            ensureHeader(scheduleCsvPath, 'Title,Date,Time,URL,SeriesTag,DateRecorded');
+        }
+        eventsAdded = uniqueEvents.length;
+        console.log(`[SUMMARY] Total events processed: ${eventsAdded}`);
+
+    } catch (error) {
+        if (error && error.message) {
+            console.error('[ERROR] An error occurred:', error.message);
+            if (error.stack && !error.message.includes('ENOENT')) {
+                console.error(error.stack);
+            }
+            if (error.message.includes('no such file or directory') && error.message.includes('series.csv')) {
+                console.error('[ERROR] files/series.csv is missing. Please run beaconSeries.js first.');
+            }
+        } else {
+            console.error('[ERROR] An unknown error occurred:', error);
+        }
+        console.log(`[SUMMARY] Total events processed: ${eventsAdded}`);
+    } finally {
+        if (browser) await browser.close();
+        console.log(`[SUMMARY] beaconSchedule.js finished. Total events processed: ${eventsAdded}`);
     }
-})();
+})().catch(err => {
+    console.error('[ERROR] Unhandled exception in beaconSchedule.js:', err);
+    console.log('[SUMMARY] Total events processed: 0');
+});

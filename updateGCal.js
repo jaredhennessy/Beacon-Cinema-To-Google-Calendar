@@ -1,52 +1,61 @@
+/**
+ * updateGCal.js
+ * Synchronizes The Beacon Cinema schedule (from files/schedule.csv) with a Google Calendar.
+ * Usage: node updateGCal.js
+ * - Deletes all upcoming events from the specified Google Calendar.
+ * - Creates new events based on the schedule, including runtime and series info if available.
+ * - Handles Google OAuth2 authorization, storing tokens in token.json.
+ * - Ensures header rows in all CSVs.
+ * - Consistent error handling and output messaging.
+ * Dependencies: googleapis, dotenv, csv-parser, ./gcalAuth.js, ./utils.js
+ */
+
 const fs = require('fs');
-const readline = require('readline');
 const { google } = require('googleapis');
 const dotenv = require('dotenv');
-const http = require('http');
-const url = require('url');
 const csv = require('csv-parser');
 const path = require('path');
+const { getAccessToken } = require('./gcalAuth');
+const { ensureHeader, deduplicateRows } = require('./utils');
 
-// Load environment variables from .env
 dotenv.config();
 
-const SCOPES = ['https://www.googleapis.com/auth/calendar'];
 const TOKEN_PATH = 'token.json';
 const SCHEDULE_CSV_PATH = path.join(__dirname, 'files', 'schedule.csv');
 const TIME_ZONE = process.env.TIME_ZONE || 'America/Los_Angeles';
 
-/**
- * Formats a string by capitalizing the first letter of each word,
- * skipping quotation marks and special characters, and removing any
- * quotation marks at the beginning or end of the string.
- * @param {string} str - The string to format.
- * @returns {string} - The formatted string.
- */
+process.on('unhandledRejection', (reason) => {
+    console.error('[ERROR] Unhandled promise rejection in updateGCal.js:', reason);
+    console.log('[SUMMARY] Event creation completed. Successfully created: 0, Failed: 0');
+    process.exit(1);
+});
+
 function formatString(str) {
     return str
-        .replace(/^"|"$/g, '') // Remove quotation marks at the beginning or end
+        .replace(/^"|"$/g, '')
         .split(' ')
         .map(word => {
             const firstCharIndex = [...word].findIndex(char => char.match(/[a-zA-Z]/));
-            if (firstCharIndex === -1) return word; // No alphabetic character found
+            if (firstCharIndex === -1) return word;
             return (
-                word.slice(0, firstCharIndex) + // Preserve leading non-alphabetic characters
-                word.charAt(firstCharIndex).toUpperCase() + // Capitalize the first alphabetic character
-                word.slice(firstCharIndex + 1).toLowerCase() // Lowercase the rest of the word
+                word.slice(0, firstCharIndex) +
+                word.charAt(firstCharIndex).toUpperCase() +
+                word.slice(firstCharIndex + 1).toLowerCase()
             );
         })
         .join(' ');
 }
 
-/**
- * Main function to connect to Google Calendar, delete all upcoming events,
- * and create new events based on files/schedule.csv.
- * Handles OAuth2 authentication and token storage.
- */
+if (!process.env.OAUTH2_REDIRECT_URI || !process.env.CALENDAR_ID) {
+    console.error('[ERROR] OAUTH2_REDIRECT_URI and CALENDAR_ID must be set in your .env file.');
+    process.exit(1);
+}
+
 async function connectToCalendar() {
+    console.log('[START] updateGCal.js');
     try {
         if (!fs.existsSync('credentials.json')) {
-            console.error('Error: credentials.json file is missing.');
+            console.error('[ERROR] credentials.json file is missing.');
             process.exit(1);
         }
 
@@ -60,22 +69,56 @@ async function connectToCalendar() {
         );
 
         if (fs.existsSync(TOKEN_PATH)) {
-            const token = JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf8'));
-            oAuth2Client.setCredentials(token);
+            try {
+                const token = fs.readFileSync(TOKEN_PATH, 'utf8');
+                oAuth2Client.setCredentials(JSON.parse(token));
+            } catch (e) {
+                console.error('[ERROR] token.json is malformed. Please delete and reauthorize.');
+                console.log('[SUMMARY] Event creation completed. Successfully created: 0, Failed: 0');
+                process.exit(1);
+            }
         } else {
-            console.log('No token found. Starting authorization flow...');
-            await getAccessToken(oAuth2Client);
+            console.log('[INFO] No token found. Starting authorization flow...');
+            await getAccessToken(oAuth2Client); // Wait for authorization to complete
         }
 
         if (!oAuth2Client.credentials || !oAuth2Client.credentials.access_token) {
-            console.error('Error: OAuth2 client is not authenticated. Exiting...');
-            process.exit(1);
+            console.error('[ERROR] OAuth2 client is not authenticated. Exiting...');
+            console.log('[TROUBLESHOOT] Your token may be expired or missing. Try deleting token.json and re-running the script.');
+            process.exit(1); // Ensure this exit happens only if authentication fails
         }
 
         const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
 
         const seriesIndexPath = path.join(__dirname, 'files', 'seriesIndex.csv');
+        const runtimesCsvPath = path.join(__dirname, 'files', 'runtimes.csv');
         const seriesMap = new Map();
+
+        if (!fs.existsSync(SCHEDULE_CSV_PATH)) {
+            console.error(`[ERROR] ${SCHEDULE_CSV_PATH} does not exist. Please run beaconSchedule.js first.`);
+            console.log('[SUMMARY] Event creation completed. Successfully created: 0, Failed: 0');
+            return;
+        }
+
+        // Ensure header for all CSVs before reading/writing
+        ensureHeader(SCHEDULE_CSV_PATH, 'Title,Date,Time,URL,SeriesTag,DateRecorded');
+        ensureHeader(runtimesCsvPath, 'Title,Runtime');
+        ensureHeader(seriesIndexPath, 'seriesName,seriesURL,seriesTag');
+
+        const runtimesMap = new Map();
+        if (fs.existsSync(runtimesCsvPath)) {
+            await new Promise((resolve, reject) => {
+                fs.createReadStream(runtimesCsvPath)
+                    .pipe(csv())
+                    .on('data', row => {
+                        if (row.Title && row.Runtime) {
+                            runtimesMap.set(row.Title.trim(), row.Runtime.trim());
+                        }
+                    })
+                    .on('end', resolve)
+                    .on('error', reject);
+            });
+        }
 
         await new Promise((resolve, reject) => {
             fs.createReadStream(seriesIndexPath)
@@ -92,55 +135,65 @@ async function connectToCalendar() {
         const eventsToCreate = [];
         const today = new Date().toISOString().split('T')[0];
 
+        let allSkippedForMissingFields = true;
+        let duplicateEventFound = false;
+        const eventKeys = new Set();
         await new Promise((resolve, reject) => {
             fs.createReadStream(SCHEDULE_CSV_PATH)
                 .pipe(csv())
                 .on('data', row => {
+                    if (!row || typeof row !== 'object') {
+                        console.warn('[WARN] Skipping malformed row in schedule.csv:', row);
+                        return;
+                    }
                     if (!row.Date || !row.Time || !row.Title) {
-                        console.error(`Skipping invalid row: ${JSON.stringify(row)}`);
+                        console.warn(`[WARN] Skipping invalid row in schedule.csv: ${JSON.stringify(row)}`);
                         return;
                     }
-
+                    allSkippedForMissingFields = false;
                     if (row.Date < today) {
-                        console.log(`Skipping past event: ${row.Title} on ${row.Date}`);
+                        console.log(`[INFO] Skipping past event: ${row.Title} on ${row.Date}`);
                         return;
                     }
-
                     const timeRegex = /^\d{2}:\d{2}$/;
                     if (!timeRegex.test(row.Time)) {
-                        console.error(`Invalid time format for event "${row.Title}": ${row.Time}`);
+                        console.error(`[ERROR] Invalid time format for event "${row.Title}": ${row.Time}`);
                         return;
                     }
-
-                    const { time: endTime, nextDay } = addDuration(row.Time, 2);
-                    const endDate = nextDay
-                        ? new Date(new Date(row.Date).getTime() + 24 * 60 * 60 * 1000)
-                              .toISOString()
-                              .split('T')[0]
-                        : row.Date;
-
                     const formattedTitle = formatString(row.Title);
                     const formattedSeriesName = row.SeriesTag && seriesMap.has(row.SeriesTag)
                         ? formatString(seriesMap.get(row.SeriesTag))
                         : '';
 
                     const descriptionParts = [];
-                    if (formattedSeriesName) {
-                        descriptionParts.push(`Film Series: ${formattedSeriesName}`);
-                    }
-                    if (row.URL) {
-                        descriptionParts.push(`URL: ${row.URL}`);
-                    }
+                    let runtimeValue = runtimesMap.get(row.Title) || runtimesMap.get(row.Title.trim());
+                    if (runtimeValue) descriptionParts.push(`Runtime: ${runtimeValue}`);
+                    if (formattedSeriesName) descriptionParts.push(`Film Series: ${formattedSeriesName}`);
+                    if (row.URL) descriptionParts.push(`URL: ${row.URL}`);
                     const description = descriptionParts.join('\n');
+
+                    let startDateTime = new Date(`${row.Date}T${row.Time}`);
+                    let endDateTime;
+                    let runtimeMatch = runtimeValue && runtimeValue.match(/^(\d+)\s*minutes$/i);
+                    if (runtimeMatch) {
+                        const runtimeMinutes = parseInt(runtimeMatch[1], 10) + 15;
+                        endDateTime = new Date(startDateTime.getTime() + runtimeMinutes * 60000);
+                    } else {
+                        endDateTime = new Date(startDateTime.getTime() + 2 * 60 * 60000);
+                    }
+
+                    const key = `${row.Title}|${row.Date}|${row.Time}`;
+                    if (eventKeys.has(key)) duplicateEventFound = true;
+                    eventKeys.add(key);
 
                     eventsToCreate.push({
                         summary: formattedTitle,
                         start: {
-                            dateTime: new Date(`${row.Date}T${row.Time}`).toISOString(),
+                            dateTime: startDateTime.toISOString(),
                             timeZone: TIME_ZONE,
                         },
                         end: {
-                            dateTime: new Date(`${endDate}T${endTime}`).toISOString(),
+                            dateTime: endDateTime.toISOString(),
                             timeZone: TIME_ZONE,
                         },
                         location: "The Beacon Cinema, 4405 Rainier Ave S, Seattle, WA 98118, USA",
@@ -151,41 +204,94 @@ async function connectToCalendar() {
                 .on('error', reject);
         });
 
+        if (duplicateEventFound) {
+            console.warn('[WARN] Duplicate events (by Title/Date/Time) found in schedule.csv.');
+        }
+        if (allSkippedForMissingFields) {
+            console.warn('[WARN] All events were skipped due to missing required fields.');
+        }
+
         if (eventsToCreate.length === 0) {
-            console.error('No valid events to create. Exiting without deleting existing events.');
+            console.warn('[WARN] No events to create after parsing schedule.csv. Exiting.');
+            console.log('[SUMMARY] Event creation completed. Successfully created: 0, Failed: 0');
             return;
         }
 
-        console.log(`Creating ${eventsToCreate.length} events.`);
+        // Deduplicate events by summary/start time
+        const uniqueEventsToCreate = deduplicateRows(eventsToCreate, event => `${event.summary}|${event.start.dateTime}`);
+        let duplicateWritten = uniqueEventsToCreate.length < eventsToCreate.length;
+
+        if (duplicateWritten) {
+            console.warn('[WARN] Duplicate events found in final uniqueEventsToCreate.');
+        }
+        if (uniqueEventsToCreate.length === 0) {
+            console.error('[ERROR] No valid events to create. Exiting without deleting existing events.');
+            console.log('[SUMMARY] Event creation completed. Successfully created: 0, Failed: 0');
+            console.warn('[SUMMARY] No valid events were written to Google Calendar.');
+            return;
+        }
+
+        console.log(`[INFO] Creating ${uniqueEventsToCreate.length} events.`);
         await deleteUpcomingEvents(calendar);
 
         let successCount = 0;
         let failureCount = 0;
 
-        for (const event of eventsToCreate) {
+        for (const event of uniqueEventsToCreate) {
             try {
                 await calendar.events.insert({
                     calendarId: process.env.CALENDAR_ID,
                     resource: event,
                 });
-                console.log(`Event created: ${event.summary}`);
                 successCount++;
+                console.log(`[INFO] Event created (${successCount}/${uniqueEventsToCreate.length}): ${event.summary}`);
             } catch (error) {
-                console.error(`Failed to create event: ${event.summary}`, error.message);
+                console.error(`[ERROR] Failed to create event: ${event.summary}`, error.message);
+                // Add troubleshooting steps for common auth errors
+                if (
+                    error &&
+                    error.message &&
+                    (
+                        error.message.includes('No refresh token is set') ||
+                        error.message.includes('invalid_grant') ||
+                        error.message.includes('invalid_request') ||
+                        error.message.includes('invalid_client') ||
+                        error.message.includes('unauthorized')
+                    )
+                ) {
+                    console.log('[TROUBLESHOOT] Common authentication issues:');
+                    console.log('  - Ensure credentials.json is present and valid (download from Google Cloud Console).');
+                    console.log('  - OAUTH2_REDIRECT_URI and CALENDAR_ID must be set in your .env file.');
+                    console.log('  - If you see "redirect_uri_mismatch", update your Google Cloud Console OAuth2 redirect URI.');
+                    console.log('  - If you see "invalid_grant", the authorization code may have expired. Try authorizing again.');
+                    console.log('  - If you see "invalid_request", check your credentials.json and .env for typos.');
+                    console.log('  - Make sure your Google Cloud project has the Calendar API enabled.');
+                    console.log('  - Delete token.json and re-run the script to reauthorize if token issues persist.');
+                }
                 failureCount++;
             }
         }
 
-        console.log(`Event creation completed. Successfully created: ${successCount}, Failed: ${failureCount}`);
+        // Output summary
+        console.log(`[SUMMARY] Event creation completed. Successfully created: ${successCount}, Failed: ${failureCount}`);
+        process.exit(0); // Ensure clean exit after successful completion
     } catch (error) {
-        console.error('Error connecting to the calendar:', error.message);
+        if (error && error.message) {
+            console.error('[ERROR] Error connecting to the calendar:', error.message);
+            if (error.stack && !error.message.includes('ENOENT')) {
+                console.error(error.stack);
+            }
+        } else {
+            console.error('[ERROR] An unknown error occurred while connecting to the calendar:', error);
+        }
+        console.log('[SUMMARY] Event creation completed. Successfully created: 0, Failed: 0');
+        process.exit(1); // Exit with error code
+    } finally {
+        console.log('[INFO] connectToCalendar completed.');
     }
 }
 
-/**
- * Deletes all upcoming events from the specified Google Calendar.
- * @param {google.calendar_v3.Calendar} calendar - The Google Calendar API client.
- */
+// Delete all upcoming events from the calendar
 async function deleteUpcomingEvents(calendar) {
     try {
         const calendarId = process.env.CALENDAR_ID;
@@ -198,104 +304,33 @@ async function deleteUpcomingEvents(calendar) {
             orderBy: 'startTime',
         });
 
-        const events = eventsResponse.data.items;
+        const events = eventsResponse.data.items || [];
 
         if (events.length) {
-            console.log(`Found ${events.length} upcoming events. Deleting them...`);
+            console.log(`[INFO] Found ${events.length} upcoming events. Deleting them...`);
+            let deleteCount = 0;
             for (const event of events) {
                 try {
                     await calendar.events.delete({
                         calendarId,
                         eventId: event.id,
                     });
-                    console.log(`Deleted event: ${event.summary}`);
+                    deleteCount++;
+                    console.log(`[INFO] Deleted event (${deleteCount}/${events.length}): ${event.summary}`);
                 } catch (error) {
-                    console.error(`Failed to delete event: ${event.summary}`, error.message);
+                    console.error(`[ERROR] Failed to delete event: ${event.summary}`, error.message);
                 }
             }
         } else {
-            console.log('No upcoming events to delete.');
+            console.info('[INFO] No upcoming events found to delete.');
+            console.log('[SUMMARY] No upcoming events to delete.');
         }
     } catch (error) {
-        console.error('Error deleting upcoming events:', error.message);
+        console.error('[ERROR] Error deleting upcoming events:', error.message);
     }
 }
 
-/**
- * Starts the OAuth2 authorization flow and stores the token in token.json.
- * Prompts the user to visit a URL and authorize the app.
- * @param {google.auth.OAuth2} oAuth2Client - The OAuth2 client.
- * @returns {Promise<void>}
- */
-async function getAccessToken(oAuth2Client) {
-    const authUrl = oAuth2Client.generateAuthUrl({
-        access_type: 'offline',
-        scope: SCOPES,
-    });
-    console.log('Authorize this app by visiting this URL:', authUrl);
-
-    return new Promise((resolve, reject) => {
-        const server = http.createServer(async (req, res) => {
-            if (req.url.startsWith('/')) {
-                const query = new url.URL(req.url, 'http://localhost:3000').searchParams;
-                const code = query.get('code');
-
-                if (code) {
-                    res.end('Authorization successful! You can close this window.');
-                    try {
-                        const { tokens } = await oAuth2Client.getToken(code);
-                        oAuth2Client.setCredentials(tokens);
-                        fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens));
-                        console.log('Token stored to', TOKEN_PATH);
-                        console.log('Please re-run the script now that the token has been created.');
-                        server.close(() => resolve());
-                    } catch (err) {
-                        console.error('Error retrieving access token:', err.message);
-                        res.end('Error retrieving access token. Check the console for details.');
-                        server.close(() => reject(err));
-                    }
-                } else {
-                    res.end('Authorization failed. No code received.');
-                    server.close(() => reject(new Error('No authorization code received.')));
-                }
-            }
-        });
-
-        server.listen(3000, () => {
-            console.log('Waiting for authorization on http://localhost:3000...');
-        });
-
-        process.on('SIGINT', () => {
-            console.log('Shutting down the server...');
-            server.close(() => {
-                console.log('Server closed.');
-                process.exit(0);
-            });
-        });
-    });
-}
-
-/**
- * Adds a duration (in hours) to a time string (HH:MM).
- * Returns the new time string and whether the end time is on the next day.
- * @param {string} time - The start time in HH:MM format.
- * @param {number} durationHours - The number of hours to add.
- * @returns {{time: string, nextDay: boolean}}
- */
-function addDuration(time, durationHours) {
-    const timeRegex = /^\d{2}:\d{2}$/;
-    if (!timeRegex.test(time)) {
-        throw new Error(`Invalid time format: ${time}`);
-    }
-
-    const [hours, minutes] = time.split(':').map(Number);
-    const endHours = (hours + durationHours) % 24;
-    const nextDay = hours + durationHours >= 24;
-
-    return {
-        time: `${endHours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`,
-        nextDay,
-    };
-}
-
-connectToCalendar();
+connectToCalendar().catch(err => {
+    console.error('[ERROR] Unhandled exception in updateGCal.js:', err);
+    console.log('[SUMMARY] Event creation completed. Successfully created: 0, Failed: 0');
+});
