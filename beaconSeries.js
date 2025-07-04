@@ -31,87 +31,56 @@ process.on('unhandledRejection', (reason) => {
 
     let processedCount = 0;
     let skippedCount = 0;
-    let anyRecordsAdded = false;
-    let allSkippedForMissingFields = true;
     let allTitles = {};
 
     try {
         ensureHeader(seriesCsvPath, 'Title,SeriesTag,DateRecorded');
         ensureHeader(seriesIndexCsvPath, 'seriesName,seriesURL,seriesTag');
 
-        const rows = [];
         if (!fs.existsSync(seriesIndexCsvPath)) {
             console.error(`[ERROR] ${seriesIndexCsvPath} does not exist.`);
-            console.log(`[SUMMARY] Processed: ${processedCount}, Skipped: ${skippedCount}`);
-            return;
+            console.log(`[SUMMARY] Processed: 0, Skipped: 0`);
+            process.exit(1);
         }
-        fs.createReadStream(seriesIndexCsvPath)
-            .pipe(csvParser())
-            .on('data', (row) => {
-                if (!row || typeof row !== 'object') {
-                    console.warn('[WARN] Skipping malformed row in seriesIndex.csv:', row);
-                    return;
-                }
-                rows.push(row);
-            })
-            .on('end', async () => {
-                if (rows.length > 0) {
-                    console.log(`[INFO] Found ${rows.length} series in ${seriesIndexCsvPath}.`);
 
-                    const seenTags = new Set();
-                    for (const row of rows) {
-                        if (row.seriesTag) {
-                            if (seenTags.has(row.seriesTag)) {
-                                console.warn(`[WARN] Duplicate SeriesTag "${row.seriesTag}" found in seriesIndex.csv.`);
-                            }
-                            seenTags.add(row.seriesTag);
-                        }
+        // Read all rows from seriesIndex.csv
+        const rows = await new Promise((resolve, reject) => {
+            const out = [];
+            fs.createReadStream(seriesIndexCsvPath)
+                .pipe(csvParser())
+                .on('data', (row) => {
+                    if (!row || typeof row !== 'object') {
+                        console.warn('[WARN] Skipping malformed row in seriesIndex.csv:', row);
+                        return;
                     }
+                    out.push(row);
+                })
+                .on('end', () => resolve(out))
+                .on('error', reject);
+        });
 
-                    for (const row of rows) {
-                        const seriesName = row.seriesName;
-                        const seriesUrl = row.seriesURL;
-                        const seriesTag = row.seriesTag;
-
-                        if (!seriesName || !seriesUrl || !seriesTag) {
-                            console.warn(`[WARN] Skipping row with missing required field(s):`, row);
-                            skippedCount++;
-                            continue;
-                        }
-
-                        allSkippedForMissingFields = false;
-
-                        console.log(`[INFO] Processing series: ${seriesName}`);
-                        const success = await executeScript(seriesUrl, seriesTag, seriesCsvPath, allTitles);
-                        if (success) {
-                            processedCount++;
-                            anyRecordsAdded = true;
-                        } else {
-                            skippedCount++;
-                        }
-                    }
-
-                    const multiTagTitles = Object.entries(allTitles).filter(([title, tags]) => tags.size > 1);
-                    if (multiTagTitles.length > 0) {
-                        console.warn('[WARN] The following titles appear in multiple SeriesTags:', multiTagTitles.map(([t, tags]) => `${t} [${[...tags].join(', ')}]`).join('; '));
-                    }
-
-                    console.log(`[SUMMARY] Processed: ${processedCount}, Skipped: ${skippedCount}`);
-                } else {
-                    console.info('[INFO] No series found in seriesIndex.csv.');
-                    console.log(`[SUMMARY] Processed: ${processedCount}, Skipped: ${skippedCount}`);
-                }
-                if (!anyRecordsAdded) {
-                    console.log('[SUMMARY] No new records were added to series.csv.');
-                }
-                if (allSkippedForMissingFields) {
-                    console.warn('[SUMMARY] All rows in seriesIndex.csv were skipped due to missing required fields.');
-                }
-                if (processedCount === 0) {
-                    console.warn('[WARN] No valid series records were added for any series. Please check your seriesIndex.csv and the source URLs.');
-                }
-                console.log(`[SUMMARY] beaconSeries.js finished. Processed: ${processedCount}, Skipped: ${skippedCount}`);
+        // Read all existing series.csv rows
+        let existingRows = [];
+        if (fs.existsSync(seriesCsvPath)) {
+            existingRows = await new Promise((resolve, reject) => {
+                const out = [];
+                fs.createReadStream(seriesCsvPath)
+                    .pipe(csvParser())
+                    .on('data', (row) => {
+                        if (row.Title && row.SeriesTag) out.push(row);
+                    })
+                    .on('end', () => resolve(out))
+                    .on('error', reject);
             });
+        }
+
+        // Process all series rows
+        const { processedCount: pc, skippedCount: sc } = await processSeriesRows(rows, existingRows, seriesCsvPath, allTitles, seriesIndexCsvPath);
+        processedCount = pc;
+        skippedCount = sc;
+
+        console.log(`[SUMMARY] Processed: ${processedCount}, Skipped: ${skippedCount}`);
+        process.exit(0);
     } catch (error) {
         if (error && error.message) {
             console.error('[ERROR] Error reading seriesIndex.csv:', error.message);
@@ -125,26 +94,13 @@ process.on('unhandledRejection', (reason) => {
             console.error('[ERROR] An unknown error occurred:', error);
         }
         console.log(`[SUMMARY] Processed: ${processedCount}, Skipped: ${skippedCount}`);
+        process.exit(1);
     }
-    console.log(`[SUMMARY] beaconSeries.js finished. Processed: ${processedCount}, Skipped: ${skippedCount}`);
-})().catch(err => {
-    console.error('[ERROR] Unhandled exception in beaconSeries.js:', err);
-    console.log('[SUMMARY] Processed: 0, Skipped: 0');
-});
+})();
 
-// Scrape titles for a single series and update series.csv
+// Scrape titles for a single series and return new records (do not write to file)
 async function executeScript(seriesUrl, seriesTag, seriesCsvPath, allTitles) {
     ensureHeader(seriesCsvPath, 'Title,SeriesTag,DateRecorded');
-
-    const seriesCsvWriter = createCsvWriter({
-        path: seriesCsvPath,
-        header: [
-            { id: 'Title', title: 'Title' },
-            { id: 'SeriesTag', title: 'SeriesTag' },
-            { id: 'DateRecorded', title: 'DateRecorded' }
-        ],
-        append: true
-    });
 
     let browser;
     try {
@@ -168,7 +124,7 @@ async function executeScript(seriesUrl, seriesTag, seriesCsvPath, allTitles) {
 
         if (!Array.isArray(seriesTitles) || seriesTitles.length === 0) {
             console.warn('[WARN] No titles found on the page. Skipping this series.');
-            return false;
+            return [];
         }
 
         let filteredTitles = seriesTitles.filter(title => title.trim() !== '' && title !== '?????? CINEMA');
@@ -185,66 +141,20 @@ async function executeScript(seriesUrl, seriesTag, seriesCsvPath, allTitles) {
 
         if (filteredTitles.length === 0) {
             console.warn('[WARN] No valid titles extracted. Skipping this series.');
-            return false;
+            return [];
         }
 
         console.log(`[INFO] Extracted ${filteredTitles.length} valid titles.`);
 
-        let existingRows = [];
-        if (fs.existsSync(seriesCsvPath)) {
-            existingRows = await new Promise((resolve, reject) => {
-                const rows = [];
-                fs.createReadStream(seriesCsvPath)
-                    .pipe(csvParser())
-                    .on('data', (row) => rows.push(row))
-                    .on('end', () => resolve(rows))
-                    .on('error', reject);
-            });
-            existingRows = existingRows.filter(row => row.Title && row.SeriesTag);
-        }
-
-        // Remove old rows for this SeriesTag
-        // This ensures that outdated rows for the same SeriesTag are not retained in the CSV.
-        const filteredRows = existingRows.filter(row => row.SeriesTag !== seriesTag);
-        const tempCsvWriter = createCsvWriter({
-            path: seriesCsvPath,
-            header: [
-                { id: 'Title', title: 'Title' },
-                { id: 'SeriesTag', title: 'SeriesTag' },
-                { id: 'DateRecorded', title: 'DateRecorded' }
-            ]
-        });
-
-        await tempCsvWriter.writeRecords(filteredRows);
-        if (existingRows.length !== filteredRows.length) {
-            console.log(`[INFO] Removed rows with SeriesTag "${seriesTag}" from ${seriesCsvPath}.`);
-        } else {
-            console.log(`[INFO] No existing rows with SeriesTag "${seriesTag}" found in ${seriesCsvPath}.`);
-        }
-
-        // Deduplicate titles before writing
-        // This ensures that duplicate titles are not added to the CSV.
-        const existingTitleSet = new Set(existingRows.map(r => `${r.Title}|${r.SeriesTag}`));
         const currentTimestamp = new Date().toISOString();
-        let seriesRecords = filteredTitles
-            .filter(title => !existingTitleSet.has(`${title}|${seriesTag}`))
-            .map(title => ({
-                Title: title,
-                SeriesTag: seriesTag,
-                DateRecorded: currentTimestamp
-            }));
+        let seriesRecords = filteredTitles.map(title => ({
+            Title: title,
+            SeriesTag: seriesTag,
+            DateRecorded: currentTimestamp
+        }));
+
         // Use deduplicateRows to ensure no duplicate Title within this batch
         seriesRecords = deduplicateRows(seriesRecords, rec => rec.Title);
-
-        const writtenTitleSet = new Set();
-        let duplicateWritten = false;
-        for (const rec of seriesRecords) {
-            if (writtenTitleSet.has(rec.Title)) duplicateWritten = true;
-            writtenTitleSet.add(rec.Title);
-        }
-        if (duplicateWritten) {
-            console.warn(`[WARN] Duplicate titles found in final written records for SeriesTag "${seriesTag}".`);
-        }
 
         for (const t of filteredTitles) {
             if (!allTitles[t]) allTitles[t] = new Set();
@@ -254,15 +164,11 @@ async function executeScript(seriesUrl, seriesTag, seriesCsvPath, allTitles) {
         if (seriesRecords.length === 0) {
             console.log('[INFO] No new records to write for this series.');
             console.warn('[WARN] No valid series records written for SeriesTag:', seriesTag);
-            return false;
+            return [];
         }
 
-        await seriesCsvWriter.writeRecords(seriesRecords);
-        console.log(`[INFO] series.csv updated successfully. ${seriesRecords.length} records added for SeriesTag "${seriesTag}".`);
-        // Ensure header after writing
-        // This ensures that the CSV file has the correct header after records are written.
-        ensureHeader(seriesCsvPath, 'Title,SeriesTag,DateRecorded');
-        return true;
+        // Return new records for this series
+        return seriesRecords;
     } catch (error) {
         if (error && error.message) {
             console.error('[ERROR] An error occurred:', error.message);
@@ -288,7 +194,61 @@ async function executeScript(seriesUrl, seriesTag, seriesCsvPath, allTitles) {
         } else {
             console.error('[ERROR] An unknown error occurred:', error);
         }
+        return [];
     } finally {
         if (browser) await browser.close();
     }
+}
+
+// Process all series rows and write to series.csv
+async function processSeriesRows(rows, existingRows, seriesCsvPath, allTitles, seriesIndexCsvPath) {
+    let processedCount = 0;
+    let skippedCount = 0;
+    let allSkippedForMissingFields = true;
+    if (rows.length > 0) {
+        console.log(`[INFO] Found ${rows.length} series in ${seriesIndexCsvPath}.`);
+        const seenTags = new Set();
+        let allNewRecords = [];
+        for (const row of rows) {
+            if (!row.seriesURL || !row.seriesTag) {
+                console.warn('[WARN] Skipping row with missing seriesURL or seriesTag:', row);
+                skippedCount++;
+                continue;
+            }
+            if (seenTags.has(row.seriesTag)) {
+                console.warn(`[WARN] Duplicate seriesTag "${row.seriesTag}" found in seriesIndex.csv.`);
+            }
+            seenTags.add(row.seriesTag);
+            const newRecords = await executeScript(row.seriesURL, row.seriesTag, seriesCsvPath, allTitles);
+            if (newRecords && newRecords.length > 0) {
+                allNewRecords.push(...newRecords);
+                processedCount += newRecords.length;
+                allSkippedForMissingFields = false;
+            } else {
+                skippedCount++;
+            }
+        }
+        // Remove old rows for the same SeriesTag(s)
+        const tagsToReplace = new Set(rows.map(r => r.seriesTag));
+        const filteredExisting = existingRows.filter(r => !tagsToReplace.has(r.SeriesTag));
+        // Deduplicate all new records by Title+SeriesTag
+        allNewRecords = deduplicateRows(allNewRecords, rec => `${rec.Title}|${rec.SeriesTag}`);
+        // Write combined records to series.csv
+        const csvWriter = createCsvWriter({
+            path: seriesCsvPath,
+            header: [
+                { id: 'Title', title: 'Title' },
+                { id: 'SeriesTag', title: 'SeriesTag' },
+                { id: 'DateRecorded', title: 'DateRecorded' }
+            ]
+        });
+        await csvWriter.writeRecords([...filteredExisting, ...allNewRecords]);
+        ensureHeader(seriesCsvPath, 'Title,SeriesTag,DateRecorded');
+        if (allSkippedForMissingFields) {
+            console.warn('[WARN] All series were skipped due to missing required fields.');
+        }
+    } else {
+        console.warn('[WARN] No rows found in seriesIndex.csv.');
+    }
+    return { processedCount, skippedCount };
 }
