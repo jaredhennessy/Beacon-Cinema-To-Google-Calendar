@@ -131,18 +131,7 @@ This project automates scraping [The Beacon Cinema](https://thebeacon.film/calen
 
 ## Usage
 
-### Quick Start
-
-Experienced users can run the full pipeline with:
-
-```bash
-npm install
-node fullUpdate.js
-```
-
-This will prompt before each step and update all data and your Google Calendar.
-
-### Full Update Pipeline (Recommended)
+### Full Update
 
 Run the complete update process:
 
