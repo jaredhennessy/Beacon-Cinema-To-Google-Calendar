@@ -18,7 +18,7 @@ This project automates scraping [The Beacon Cinema](https://thebeacon.film/calen
 
 ## Prerequisites
 
-- Node.js 14 or higher (enforced by scripts; scripts will exit if version is too old)
+- Node.js 14 or higher (recommended)
 - A Google Cloud project with:
   - Calendar API enabled
   - OAuth 2.0 credentials configured
@@ -40,9 +40,9 @@ This project automates scraping [The Beacon Cinema](https://thebeacon.film/calen
   - `credentials.json` (Google OAuth2 credentials, in project root)
   - `.env` (environment variables, in project root)
   - `files/` directory (all CSVs go here)
-  - `files/seriesIndex.csv` (must be created/edited by you)
+  - `files/seriesIndex.csv` (must be created/edited by you **before running scripts**)
   - `files/series.csv`, `files/schedule.csv`, `files/runtimes.csv` (auto-created/updated by scripts as needed)
-- If a required CSV file is missing or empty, scripts will create it with the correct header.
+- If a required CSV file is missing or empty, scripts will create it with the correct header row, but you must populate `seriesIndex.csv` yourself.
 
 ## CSV File Handling
 
@@ -115,7 +115,7 @@ This project automates scraping [The Beacon Cinema](https://thebeacon.film/calen
 
 4. **Set up `files/seriesIndex.csv`**:
     - This file contains the list of series with their names, URLs, and tags.
-    - You must create and edit this file manually. Each row should have:
+    - **You must create and edit this file manually before running any scripts.** Each row should have:
         - `seriesName`: The name of the series (can be quoted if it contains commas)
         - `seriesURL`: The URL of the series/program page on the Beacon site
         - `seriesTag`: A short, unique tag for the series (used for grouping)
@@ -229,14 +229,14 @@ node updateGCal.js
 
 ## .gitignore and Sensitive Files
 
-- `.gitignore` is set up to ignore sensitive files (`credentials.json`, `token.json`, `.env`) and all CSVs by default.
+- `.gitignore` is set up to ignore sensitive files (`credentials.json`, `token.json`, `.env`) and all CSVs in `files/` by default.
 - Do not commit your credentials or tokens to version control.
 
 ## Troubleshooting
 
 - **Google Authentication:** If you see authentication errors, delete `token.json` and re-run the script to reauthorize.
-- **Missing Files/Directories:** Ensure you have created the `files` directory and at least `seriesIndex.csv`.
-- **Node Version:** Scripts require Node.js 14+ and will exit if an older version is detected.
+- **Missing Files/Directories:** Ensure you have created the `files` directory and at least `seriesIndex.csv` before running scripts.
+- **Node Version:** Scripts require Node.js 14+ and may not work with older versions.
 - **Puppeteer/Chromium Issues:** If Puppeteer fails to launch Chromium, check for missing system dependencies.
 - **CSV Issues:** If you see warnings about malformed or duplicate rows, check your CSV files for formatting errors.
 
