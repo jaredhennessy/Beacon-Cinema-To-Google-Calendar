@@ -131,22 +131,26 @@ This project automates scraping [The Beacon Cinema](https://thebeacon.film/calen
 
 ## Usage
 
-### Full Update
+### Full Update (Recommended)
 
 Run the complete update process:
+
+```bash
+npm start
+```
+
+or
 
 ```bash
 node fullUpdate.js
 ```
 
-This script sequentially executes the following steps, prompting before each:
+This script sequentially executes the following steps, prompting before each (with a 5-second timeout defaulting to yes):
 
 1. `beaconSeries.js` - Updates film series data from `files/seriesIndex.csv` and writes to `files/series.csv`.
 2. `beaconSchedule.js` - Scrapes the current schedule and writes to `files/schedule.csv`.
 3. `findRuntimes.js` - Extracts runtime information for scheduled films and writes to `files/runtimes.csv`.
 4. `updateGCal.js` - Updates Google Calendar with the latest schedule.
-
-Each step prompts for confirmation with a 5-second timeout (defaults to yes).
 
 ### Individual Scripts
 

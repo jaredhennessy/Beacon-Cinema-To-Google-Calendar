@@ -1,10 +1,16 @@
 {
+  "name": "jcal",
+  "version": "1.0.0",
+  "main": "fullUpdate.js",
+  "scripts": {
+    "start": "node fullUpdate.js"
+  },
   "dependencies": {
     "@google-cloud/local-auth": "^2.1.0",
     "csv-parser": "^3.2.0",
     "csv-writer": "^1.6.0",
-    "dotenv": "^16.5.0",
+    "puppeteer": "^24.6.1",
     "googleapis": "^105.0.0",
-    "puppeteer": "^24.6.1"
+    "dotenv": "^16.5.0"
   }
 }
