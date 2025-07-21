@@ -69,7 +69,7 @@ async function getAccessToken(oAuth2Client) {
             printAuthTroubleshooting();
             process.exit(1);
         }
-        // If token exists and is valid, reuse it
+        // If token exists, check validity and handle expiration
         if (fs.existsSync(TOKEN_PATH)) {
             try {
                 const token = fs.readFileSync(TOKEN_PATH, 'utf8');
@@ -80,10 +80,20 @@ async function getAccessToken(oAuth2Client) {
                 }
                 const parsed = JSON.parse(token);
                 if (parsed.expiry_date && parsed.expiry_date < Date.now()) {
-                    console.warn('[WARN] token.json is expired. Delete token.json and re-run the script to reauthorize.');
+                    console.warn('[WARN] token.json is expired. Deleting token.json and starting OAuth reauthorization.');
+                    try {
+                        fs.unlinkSync(TOKEN_PATH);
+                        console.log('[INFO] Deleted expired token.json.');
+                    } catch (delErr) {
+                        console.error('[ERROR] Failed to delete expired token.json:', delErr);
+                        printAuthTroubleshooting();
+                        process.exit(1);
+                    }
+                    // Continue to OAuth flow below
+                } else {
+                    console.log('[INFO] Existing token.json found. Reusing stored token.');
+                    return;
                 }
-                console.log('[INFO] Existing token.json found. Reusing stored token.');
-                return;
             } catch (err) {
                 console.error('[ERROR] token.json is malformed. Please delete and reauthorize.');
                 printAuthTroubleshooting();

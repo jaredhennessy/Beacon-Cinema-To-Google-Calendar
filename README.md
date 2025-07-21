@@ -236,9 +236,16 @@ node updateGCal.js
 - `.gitignore` is set up to ignore sensitive files (`credentials.json`, `token.json`, `.env`) and all CSVs in `files/` by default.
 - Do not commit your credentials or tokens to version control.
 
+
+## Token Expiration and Authentication
+
+- The scripts now automatically check if your Google Calendar `token.json` is expired before making API requests.
+- If the token is expired, it will be deleted and you will be prompted to reauthorize via the OAuth flow in your browser.
+- You no longer need to manually delete `token.json` if you see authentication errors due to expiration.
+
 ## Troubleshooting
 
-- **Google Authentication:** If you see authentication errors, delete `token.json` and re-run the script to reauthorize.
+- **Google Authentication:** If you see authentication errors not related to token expiration, check your `credentials.json` and `.env` files for correctness. The script will guide you through reauthorization if needed.
 - **Missing Files/Directories:** Ensure you have created the `files` directory and at least `seriesIndex.csv` before running scripts.
 - **Node Version:** Scripts require Node.js 14+ and may not work with older versions.
 - **Puppeteer/Chromium Issues:** If Puppeteer fails to launch Chromium, check for missing system dependencies.
