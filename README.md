@@ -21,8 +21,8 @@ This project automates scraping [The Beacon Cinema](https://thebeacon.film/calen
 - Node.js 14 or higher (recommended)
 - A Google Cloud project with:
   - Calendar API enabled
-  - OAuth 2.0 credentials configured
-- Access to modify a Google Calendar
+  - A service account with a JSON key (downloaded as beacon-calendar-update.json)
+- The service account email must be added as an editor to your target Google Calendar (in the Google Calendar UI).
 
 > **Tip:** All scripts must be run from the project root (`jcal`) using Node.js (not in a browser).
 
@@ -37,11 +37,11 @@ This project automates scraping [The Beacon Cinema](https://thebeacon.film/calen
 ## Required Files and Directory Structure
 
 - The following files and directories are required:
-  - `credentials.json` (Google OAuth2 credentials, in project root)
-  - `.env` (environment variables, in project root)
-  - `files/` directory (all CSVs go here)
-  - `files/seriesIndex.csv` (must be created/edited by you **before running scripts**)
-  - `files/series.csv`, `files/schedule.csv`, `files/runtimes.csv` (auto-created/updated by scripts as needed)
+  - beacon-calendar-update.json: Google service account credentials.
+  - .env (environment variables, in project root)
+  - files/ directory (all CSVs go here)
+  - files/seriesIndex.csv (must be created/edited by you **before running scripts**)
+  - files/series.csv, files/schedule.csv, files/runtimes.csv (auto-created/updated by scripts as needed)
 - If a required CSV file is missing or empty, scripts will create it with the correct header row, but you must populate `seriesIndex.csv` yourself.
 
 ## CSV File Handling
@@ -55,10 +55,10 @@ This project automates scraping [The Beacon Cinema](https://thebeacon.film/calen
 
 ## Script Outputs
 
-- `files/series.csv`: List of film titles and their associated series tags, updated by `beaconSeries.js`.
-- `files/schedule.csv`: The current schedule of films (title, date, time, URL, series tag), updated by `beaconSchedule.js`.
-- `files/runtimes.csv`: Runtime information for each film, updated by `findRuntimes.js`.
-- `token.json`: Google OAuth2 token, created after first successful authentication.
+- `files/series.csv`: List of film titles and their associated series tags, updated by beaconSeries.js.
+- `files/schedule.csv`: The current schedule of films (title, date, time, URL, series tag), updated by beaconSchedule.js.
+- `files/runtimes.csv`: Runtime information for each film, updated by findRuntimes.js.
+- `token.json`: (No longer used; previously for OAuth2 user authentication.)
 
 ## Updating or Resetting Data
 
@@ -88,24 +88,20 @@ This project automates scraping [The Beacon Cinema](https://thebeacon.film/calen
 ## Configuration
 
 1. **Google Cloud Project Setup**:
-    - Go to [Google Cloud Console](https://console.cloud.google.com/).
+    - Go to Google Cloud Console.
     - Enable the Calendar API.
-    - Create OAuth 2.0 credentials:
-        - Go to "Credentials" and click "Create Credentials" > "OAuth 2.0 Client IDs".
-        - Set the "Application type" to "Web application".
-        - Set the redirect URI to `http://localhost:3000`.
-        - Download the credentials as `credentials.json` and place it in the project root.
+    - Create a service account and download the JSON key as beacon-calendar-update.json to your project root.
+    - In the Google Calendar web UI, share your target calendar with the service account email (as an editor).
 
 2. **Environment Configuration**:
-    - Create a `.env` file in the project root with the following content:
+    - Create a .env file in the project root with the following content:
 
         ```env
-        CALENDAR_ID=your_calendar_id
-        OAUTH2_REDIRECT_URI=http://localhost:3000
+        CALENDAR_ID=your_calendar_id@group.calendar.google.com
         TIME_ZONE=America/Los_Angeles
         ```
 
-        Replace `your_calendar_id` with the ID of the Google Calendar you want to update.
+        Replace <your_calendar_id@group.calendar.google.com> with the ID of the Google Calendar you want to update.
 
 3. **Create `files` Directory**:
 
@@ -138,8 +134,6 @@ Run the complete update process:
 ```bash
 npm start
 ```
-      - A service account with a JSON key (downloaded as `beacon-calendar-update.json`)
-or
 
 ```bash
 node fullUpdate.js
@@ -155,8 +149,6 @@ This script sequentially executes the following steps, prompting before each (wi
 ### Individual Scripts
 
 You can also run each script individually as needed:
-
-      - `beacon-calendar-update.json` (Google service account credentials, in project root)
 
 ```bash
 node beaconSeries.js
@@ -176,7 +168,7 @@ node beaconSchedule.js
 - Scrapes the current calendar from the Beacon website.
 - Updates `files/schedule.csv`.
 - Removes past screenings.
-     - `token.json`: (No longer used; previously for OAuth2 user authentication.)
+  - `token.json`: (No longer used; previously for OAuth2 user authentication.)
 - Deduplicates events and warns about duplicates.
 
 #### Runtime Information
@@ -203,7 +195,8 @@ node updateGCal.js
   - Series grouping (if available)
   - Venue location
   - Film page URL
-- Handles OAuth2 flow if needed (opens a browser for authorization if no valid token is found).
+- Uses a Google service account for authentication (no OAuth2 or browser authorization required).
+- The service account email must be added as an editor to your target Google Calendar.
 - Provides troubleshooting tips for common Google authentication errors.
 
 ## Script Overview
@@ -236,7 +229,6 @@ node updateGCal.js
 - `.gitignore` is set up to ignore sensitive files (`credentials.json`, `token.json`, `.env`) and all CSVs in `files/` by default.
 - Do not commit your credentials or tokens to version control.
 
-
 ## Token Expiration and Authentication
 
 - The scripts now automatically check if your Google Calendar `token.json` is expired before making API requests.
@@ -245,7 +237,12 @@ node updateGCal.js
 
 ## Troubleshooting
 
-- **Google Authentication:** If you see authentication errors not related to token expiration, check your `credentials.json` and `.env` files for correctness. The script will guide you through reauthorization if needed.
+- **Google Authentication:** If you see authentication errors, check the following:
+  - Is beacon-calendar-update.json present and valid in your project root?
+  - Is CALENDAR_ID set correctly in your .env file?
+  - Is the service account email added as an editor to your Google Calendar?
+  - Is the Google Calendar API enabled for your Google Cloud project?
+  - OAuth2 and token.json are no longer used.
 - **Missing Files/Directories:** Ensure you have created the `files` directory and at least `seriesIndex.csv` before running scripts.
 - **Node Version:** Scripts require Node.js 14+ and may not work with older versions.
 - **Puppeteer/Chromium Issues:** If Puppeteer fails to launch Chromium, check for missing system dependencies.

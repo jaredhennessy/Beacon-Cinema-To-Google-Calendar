@@ -6,7 +6,9 @@
  * - Not intended to be run directly.
  * - Always outputs troubleshooting steps on authentication errors.
  * Environment variable required: CALENDAR_ID
- * beacon-calendar-update.json must be present in the project root.
+ * beacon-calendar-update.json (service account key) must be present in the project root.
+ *
+ * Note: This project now uses a Google service account for all authentication. token.json and OAuth2 are no longer used.
  */
 
 const fs = require('fs');
@@ -14,16 +16,15 @@ const { google } = require('googleapis');
 
 const SERVICE_ACCOUNT_PATH = 'beacon-calendar-update.json';
 
-// Print common troubleshooting steps for authentication issues
+// Print common troubleshooting steps for authentication issues (service account)
 function printAuthTroubleshooting() {
     console.log('[TROUBLESHOOT] Common authentication issues:');
-    console.log('  - Ensure credentials.json is present and valid (download from Google Cloud Console).');
+    console.log('  - Ensure beacon-calendar-update.json (service account key) is present and valid in the project root.');
     console.log('  - CALENDAR_ID must be set in your .env file.');
-    console.log('  - If you see "redirect_uri_mismatch", update your Google Cloud Console OAuth2 redirect URI.');
-    console.log('  - If you see "invalid_grant", the authorization code may have expired. Try authorizing again.');
-    console.log('  - If you see "invalid_request", check your credentials.json and .env for typos.');
     console.log('  - Make sure your Google Cloud project has the Calendar API enabled.');
-    console.log('  - Delete token.json and re-run the script to reauthorize if token issues persist.');
+    console.log('  - The service account email must be added as an editor to your target Google Calendar (in the Google Calendar UI).');
+    console.log('  - If you see a permissions error, double-check calendar sharing and the service account email.');
+    console.log('  - OAuth2 and token.json are no longer used.');
 }
 
 process.on('unhandledRejection', (reason) => {
