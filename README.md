@@ -37,11 +37,10 @@ This project automates scraping [The Beacon Cinema](https://thebeacon.film/calen
 ## Required Files and Directory Structure
 
 - The following files and directories are required:
-  - beacon-calendar-update.json: Google service account credentials.
-  - .env (environment variables, in project root)
-  - files/ directory (all CSVs go here)
-  - files/seriesIndex.csv (must be created/edited by you **before running scripts**)
-  - files/series.csv, files/schedule.csv, files/runtimes.csv (auto-created/updated by scripts as needed)
+  - `beacon-calendar-update.json`: Google service account credentials.
+  - `.env`: Environment configuration.
+  - `files/seriesIndex.csv`: Film series definitions.
+  - `files/series.csv`, `files/schedule.csv`, `files/runtimes.csv` (auto-created/updated by scripts as needed)
 - If a required CSV file is missing or empty, scripts will create it with the correct header row, but you must populate `seriesIndex.csv` yourself.
 
 ## CSV File Handling
@@ -58,7 +57,6 @@ This project automates scraping [The Beacon Cinema](https://thebeacon.film/calen
 - `files/series.csv`: List of film titles and their associated series tags, updated by beaconSeries.js.
 - `files/schedule.csv`: The current schedule of films (title, date, time, URL, series tag), updated by beaconSchedule.js.
 - `files/runtimes.csv`: Runtime information for each film, updated by findRuntimes.js.
-- `token.json`: (No longer used; previously for OAuth2 user authentication.)
 
 ## Updating or Resetting Data
 
@@ -168,7 +166,6 @@ node beaconSchedule.js
 - Scrapes the current calendar from the Beacon website.
 - Updates `files/schedule.csv`.
 - Removes past screenings.
-  - `token.json`: (No longer used; previously for OAuth2 user authentication.)
 - Deduplicates events and warns about duplicates.
 
 #### Runtime Information
@@ -209,32 +206,6 @@ node updateGCal.js
 | updateGCal.js      | Syncs the schedule to Google Calendar (deletes all upcoming events, then adds new ones) |
 | fullUpdate.js      | Runs all the above scripts in sequence, with prompts                                    |
 
-## File Structure
-
-### Input Files
-
-- `credentials.json`: Google OAuth2 credentials.
-- `.env`: Environment configuration.
-- `files/seriesIndex.csv`: Film series definitions.
-
-### Working Files
-
-- `files/series.csv`: Film-to-series relationships.
-- `files/schedule.csv`: Current film schedule.
-- `files/runtimes.csv`: Film runtime information.
-- `token.json`: Google OAuth2 tokens.
-
-## .gitignore and Sensitive Files
-
-- `.gitignore` is set up to ignore sensitive files (`credentials.json`, `token.json`, `.env`) and all CSVs in `files/` by default.
-- Do not commit your credentials or tokens to version control.
-
-## Token Expiration and Authentication
-
-- The scripts now automatically check if your Google Calendar `token.json` is expired before making API requests.
-- If the token is expired, it will be deleted and you will be prompted to reauthorize via the OAuth flow in your browser.
-- You no longer need to manually delete `token.json` if you see authentication errors due to expiration.
-
 ## Troubleshooting
 
 - **Google Authentication:** If you see authentication errors, check the following:
@@ -242,7 +213,6 @@ node updateGCal.js
   - Is CALENDAR_ID set correctly in your .env file?
   - Is the service account email added as an editor to your Google Calendar?
   - Is the Google Calendar API enabled for your Google Cloud project?
-  - OAuth2 and token.json are no longer used.
 - **Missing Files/Directories:** Ensure you have created the `files` directory and at least `seriesIndex.csv` before running scripts.
 - **Node Version:** Scripts require Node.js 14+ and may not work with older versions.
 - **Puppeteer/Chromium Issues:** If Puppeteer fails to launch Chromium, check for missing system dependencies.

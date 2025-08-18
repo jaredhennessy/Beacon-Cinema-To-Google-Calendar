@@ -1,14 +1,25 @@
 /**
  * beaconSeries.js
- * Processes series information from files/seriesIndex.csv,
- * scrapes film titles from each series URL, and updates files/series.csv.
+ * Scrapes series film titles from The Beacon Cinema website.
+ * 
  * Usage: node beaconSeries.js
- * - Reads all rows from files/seriesIndex.csv.
- * - For each series, scrapes titles from the provided URL.
- * - Updates files/series.csv with latest titles and SeriesTag.
- * - Removes outdated rows for the same SeriesTag before appending new rows.
- * - Ensures duplicate titles are not added.
- * Dependencies: puppeteer, csv-parser, csv-writer, ./utils.js
+ * 
+ * Operation:
+ * - Reads series definitions from files/seriesIndex.csv
+ * - For each series URL, scrapes all film titles
+ * - Updates files/series.csv with latest titles and SeriesTag
+ * - Removes outdated rows for each SeriesTag before adding new ones
+ * - Deduplicates titles within and across series
+ * 
+ * Required files:
+ * - files/seriesIndex.csv (must exist with header and data)
+ * - files/series.csv (created if missing)
+ * 
+ * Dependencies:
+ * - puppeteer (web scraping)
+ * - csv-parser (reading CSV files)
+ * - csv-writer (writing CSV files)
+ * - ./utils.js (CSV utilities)
  */
 
 const puppeteer = require('puppeteer');

@@ -1,14 +1,20 @@
 /**
  * gcalAuth.js
  * Handles Google service account authentication for Google Calendar API.
- * Exports getServiceAccountClient().
- * Usage: require('./gcalAuth').getServiceAccountClient()
- * - Not intended to be run directly.
- * - Always outputs troubleshooting steps on authentication errors.
- * Environment variable required: CALENDAR_ID
- * beacon-calendar-update.json (service account key) must be present in the project root.
- *
- * Note: This project now uses a Google service account for all authentication. token.json and OAuth2 are no longer used.
+ * Exports getServiceAccountClient() which returns a JWT client for Google Calendar API.
+ * 
+ * Usage: const client = require('./gcalAuth').getServiceAccountClient()
+ * 
+ * Required files/env:
+ * - beacon-calendar-update.json (service account key) must be in project root
+ * - CALENDAR_ID must be set in .env file and shared with service account
+ * 
+ * Authentication:
+ * - Uses service account JWT authentication only
+ * - No browser auth flow or OAuth2 tokens needed
+ * - Service account email must be added as editor to calendar in Google Calendar UI
+ * 
+ * Not intended to be run directly - imported by other scripts.
  */
 
 const fs = require('fs');

@@ -1,12 +1,21 @@
 /**
  * updateGCal.js
  * Synchronizes The Beacon Cinema schedule (from files/schedule.csv) with a Google Calendar.
+ * 
  * Usage: node updateGCal.js
- * - Deletes all upcoming events from the specified Google Calendar.
- * - Creates new events based on the schedule, including runtime and series info if available.
- * - Handles Google OAuth2 authorization, storing tokens in token.json.
- * - Ensures header rows in all CSVs.
- * - Consistent error handling and output messaging.
+ * 
+ * Operations:
+ * - Deletes all upcoming events from the specified Google Calendar
+ * - Creates new events with runtime and series info if available
+ * - Uses service account authentication (no OAuth2 or tokens needed)
+ * - Ensures header rows in all CSVs
+ * - Provides error handling and clear output messages
+ * 
+ * Required files:
+ * - beacon-calendar-update.json (service account key)
+ * - .env with CALENDAR_ID
+ * - files/schedule.csv
+ * 
  * Dependencies: googleapis, dotenv, csv-parser, ./gcalAuth.js, ./utils.js
  */
 
