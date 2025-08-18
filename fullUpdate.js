@@ -8,19 +8,20 @@
  * Usage: node fullUpdate.js
  * Each step is executed sequentially. If any step fails, the script logs the error and exits.
  * Ensures header rows in all output CSVs after each step.
- * Dependencies: ./utils.js
+ * Dependencies: ./utils.js, ./logger.js
  */
 
 const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-const { ensureHeader, warnIfDuplicateRows } = require('./utils');
 const readline = require('readline');
+const { ensureHeader, warnIfDuplicateRows } = require('./utils');
+const logger = require('./logger')('fullUpdate');
 
 // Global unhandled rejection handler
 process.on('unhandledRejection', (reason) => {
-    console.error('[ERROR] Unhandled promise rejection in fullUpdate.js:', reason);
-    console.log('[SUMMARY] fullUpdate.js failed due to an unhandled exception.');
+    logger.error('Unhandled promise rejection:', reason);
+    logger.error('fullUpdate.js failed due to an unhandled exception.');
     process.exit(1);
 });
 
@@ -28,19 +29,19 @@ process.on('unhandledRejection', (reason) => {
 const minNodeVersion = 14;
 const nodeMajor = parseInt(process.versions.node.split('.')[0], 10);
 if (nodeMajor < minNodeVersion) {
-    console.error(`[ERROR] Node.js version ${minNodeVersion}+ required. Detected: ${process.versions.node}`);
-    console.log('[SUMMARY] fullUpdate.js did not run due to incompatible Node.js version.');
+    logger.error(`Node.js version ${minNodeVersion}+ required. Detected: ${process.versions.node}`);
+    logger.error('fullUpdate.js did not run due to incompatible Node.js version.');
     process.exit(1);
 }
 
 function runScript(script, label, stepNum) {
     try {
-        console.log(`\n[INFO] [STEP ${stepNum}] Running ${label}...`);
+        logger.info(`[STEP ${stepNum}] Running ${label}...`);
         execSync(`node ${path.join(__dirname, script)}`, { stdio: 'inherit' });
-        console.log(`[INFO] [STEP ${stepNum}] ${label} completed.\n`);
+        logger.info(`[STEP ${stepNum}] ${label} completed.`);
     } catch (error) {
-        console.error(`[ERROR] [STEP ${stepNum}] ${label} failed:`, error.message);
-        console.log(`[SUMMARY] fullUpdate.js stopped at step ${stepNum}. Please check the logs for ${label}.`);
+        logger.error(`[STEP ${stepNum}] ${label} failed:`, error.message);
+        logger.error(`fullUpdate.js stopped at step ${stepNum}. Please check the logs for ${label}.`);
         process.exit(1);
     }
 }
@@ -58,8 +59,8 @@ function checkRequiredFiles() {
     // Ensure files directory exists
     const filesDir = path.join(__dirname, 'files');
     if (!fs.existsSync(filesDir)) {
-        console.error('[ERROR] Required directory missing: files/');
-        console.log('[SUMMARY] fullUpdate.js did not run due to missing files directory.');
+        logger.error('Required directory missing: files/');
+        logger.error('fullUpdate.js did not run due to missing files directory.');
         process.exit(1);
     }
     for (const file of required) {
@@ -69,11 +70,11 @@ function checkRequiredFiles() {
             if (file.endsWith('series.csv')) {
                 const expectedHeader = 'Title,SeriesTag,DateRecorded';
                 fs.writeFileSync(filePath, expectedHeader + '\n');
-                console.warn(`[WARN] ${file} was missing. Created with header row.`);
+                logger.warn(`${file} was missing. Created with header row.`);
                 continue;
             }
-            console.error(`[ERROR] Required file missing: ${file}`);
-            console.log('[SUMMARY] fullUpdate.js did not run due to missing file.');
+            logger.error(`Required file missing: ${file}`);
+            logger.error('fullUpdate.js did not run due to missing file.');
             process.exit(1);
         }
         // Check for required CSV headers
@@ -89,14 +90,14 @@ function checkRequiredFiles() {
 function checkStepOutput(file, label) {
     const filePath = path.join(__dirname, file);
     if (!fs.existsSync(filePath)) {
-        console.error(`[ERROR] Expected output file missing after ${label}: ${file}`);
-        console.log(`[SUMMARY] fullUpdate.js stopped after ${label} due to missing output file.`);
+        logger.error(`Expected output file missing after ${label}: ${file}`);
+        logger.error(`fullUpdate.js stopped after ${label} due to missing output file.`);
         process.exit(1);
     }
     const content = fs.readFileSync(filePath, 'utf8').trim();
     if (!content) {
-        console.error(`[ERROR] Output file ${file} is empty after ${label}.`);
-        console.warn(`[SUMMARY] Output file ${file} is empty after ${label}.`);
+        logger.error(`Output file ${file} is empty after ${label}.`);
+        logger.warn(`Output file ${file} is empty after ${label}.`);
         process.exit(1);
     }
     const firstLine = content.split('\n')[0];
@@ -105,14 +106,14 @@ function checkStepOutput(file, label) {
     if (file.endsWith('runtimes.csv')) expectedHeader = 'Title,Runtime';
     if (expectedHeader && firstLine.replace(/\s/g, '').toLowerCase() !== expectedHeader.replace(/\s/g, '').toLowerCase()) {
         fs.writeFileSync(filePath, expectedHeader + '\n' + content);
-        console.warn(`[WARN] Output file ${file} was missing a proper header row after ${label}. Header inserted.`);
+        logger.warn(`Output file ${file} was missing a proper header row after ${label}. Header inserted.`);
     }
     warnIfDuplicateRows(filePath);
     // Warn if no valid records written (only header present)
     const lines = content.split('\n');
     if (lines.length <= 1) {
-        console.warn(`[WARN] No valid records written to ${file} after ${label}.`);
-        console.log(`[SUMMARY] No valid records written to ${file} after ${label}.`);
+        logger.warn(`No valid records written to ${file} after ${label}.`);
+        logger.info(`No valid records written to ${file} after ${label}.`);
     }
 }
 
@@ -123,7 +124,7 @@ async function promptToRunScript(scriptName) {
             output: process.stdout,
         });
         const timeout = setTimeout(() => {
-            console.log(`[INFO] No input received. Proceeding with ${scriptName}.`);
+            logger.info(`No input received. Proceeding with ${scriptName}.`);
             rl.close();
             resolve(true);
         }, 5000);
@@ -140,13 +141,13 @@ async function runConditionalScript(script, label, stepNum) {
         if (shouldRun) {
             runScript(script, label, stepNum);
         } else {
-            console.log(`[INFO] Skipping ${label} as per user input.`);
+            logger.info(`Skipping ${label} as per user input.`);
         }
     }
 
 (async () => {
     try {
-        console.log('[INFO] [START] fullUpdate.js');
+        logger.info('[START] fullUpdate.js');
         checkRequiredFiles();
 
         await runConditionalScript('beaconSeries.js', 'beaconSeries.js', 1);
@@ -160,11 +161,11 @@ async function runConditionalScript(script, label, stepNum) {
 
         await runConditionalScript('updateGCal.js', 'updateGCal.js', 4);
 
-        console.log('[INFO] [COMPLETE] All steps finished successfully.');
-        console.log('[SUMMARY] fullUpdate.js completed all steps.');
+        logger.info('[COMPLETE] All steps finished successfully.');
+        logger.info('[SUMMARY] fullUpdate.js completed all steps.');
     } catch (err) {
-        console.error('[ERROR] Unhandled exception in fullUpdate.js:', err);
-        console.log('[SUMMARY] fullUpdate.js failed due to an unhandled exception.');
+        logger.error('[ERROR] Unhandled exception in fullUpdate.js:', err);
+        logger.error('[SUMMARY] fullUpdate.js failed due to an unhandled exception.');
         process.exit(1);
     }
 })();

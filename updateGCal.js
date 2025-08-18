@@ -26,6 +26,7 @@ const csv = require('csv-parser');
 const path = require('path');
 const { getServiceAccountClient } = require('./gcalAuth');
 const { ensureHeader, deduplicateRows } = require('./utils');
+const logger = require('./logger')('updateGCal');
 
 dotenv.config();
 
@@ -34,8 +35,8 @@ const SCHEDULE_CSV_PATH = path.join(__dirname, 'files', 'schedule.csv');
 const TIME_ZONE = process.env.TIME_ZONE || 'America/Los_Angeles';
 
 process.on('unhandledRejection', (reason) => {
-    console.error('[ERROR] Unhandled promise rejection in updateGCal.js:', reason);
-    console.log('[SUMMARY] Event creation completed. Successfully created: 0, Failed: 0');
+    logger.error('Unhandled promise rejection:', reason);
+    logger.summary(0, 0, 1);
     process.exit(1);
 });
 
@@ -56,12 +57,12 @@ function formatString(str) {
 }
 
 if (!process.env.CALENDAR_ID) {
-    console.error('[ERROR] CALENDAR_ID must be set in your .env file.');
+    logger.error('CALENDAR_ID must be set in your .env file.');
     process.exit(1);
 }
 
 async function connectToCalendar() {
-    console.log('[START] updateGCal.js');
+    logger.info('Starting updateGCal.js');
     try {
     // Authenticate using service account
     const serviceAccountClient = getServiceAccountClient();
@@ -72,8 +73,8 @@ async function connectToCalendar() {
         const seriesMap = new Map();
 
         if (!fs.existsSync(SCHEDULE_CSV_PATH)) {
-            console.error(`[ERROR] ${SCHEDULE_CSV_PATH} does not exist. Please run beaconSchedule.js first.`);
-            console.log('[SUMMARY] Event creation completed. Successfully created: 0, Failed: 0');
+            logger.error(`${SCHEDULE_CSV_PATH} does not exist. Please run beaconSchedule.js first.`);
+            logger.summary('Event creation completed. Successfully created: 0, Failed: 0');
             return;
         }
 
@@ -120,21 +121,21 @@ async function connectToCalendar() {
                 .pipe(csv())
                 .on('data', row => {
                     if (!row || typeof row !== 'object') {
-                        console.warn('[WARN] Skipping malformed row in schedule.csv:', row);
+                        logger.warn('Skipping malformed row in schedule.csv:', row);
                         return;
                     }
                     if (!row.Date || !row.Time || !row.Title) {
-                        console.warn(`[WARN] Skipping invalid row in schedule.csv: ${JSON.stringify(row)}`);
+                        logger.warn(`Skipping invalid row in schedule.csv: ${JSON.stringify(row)}`);
                         return;
                     }
                     allSkippedForMissingFields = false;
                     if (row.Date < today) {
-                        console.log(`[INFO] Skipping past event: ${row.Title} on ${row.Date}`);
+                        logger.info(`Skipping past event: ${row.Title} on ${row.Date}`);
                         return;
                     }
                     const timeRegex = /^\d{2}:\d{2}$/;
                     if (!timeRegex.test(row.Time)) {
-                        console.error(`[ERROR] Invalid time format for event "${row.Title}": ${row.Time}`);
+                        logger.error(`Invalid time format for event "${row.Title}": ${row.Time}`);
                         return;
                     }
                     const formattedTitle = formatString(row.Title);
@@ -182,15 +183,15 @@ async function connectToCalendar() {
         });
 
         if (duplicateEventFound) {
-            console.warn('[WARN] Duplicate events (by Title/Date/Time) found in schedule.csv.');
+            logger.warn('Duplicate events (by Title/Date/Time) found in schedule.csv.');
         }
         if (allSkippedForMissingFields) {
-            console.warn('[WARN] All events were skipped due to missing required fields.');
+            logger.warn('All events were skipped due to missing required fields.');
         }
 
         if (eventsToCreate.length === 0) {
-            console.warn('[WARN] No events to create after parsing schedule.csv. Exiting.');
-            console.log('[SUMMARY] Event creation completed. Successfully created: 0, Failed: 0');
+            logger.warn('No events to create after parsing schedule.csv. Exiting.');
+            logger.summary('Event creation completed. Successfully created: 0, Failed: 0');
             return;
         }
 
@@ -199,16 +200,16 @@ async function connectToCalendar() {
         let duplicateWritten = uniqueEventsToCreate.length < eventsToCreate.length;
 
         if (duplicateWritten) {
-            console.warn('[WARN] Duplicate events found in final uniqueEventsToCreate.');
+            logger.warn('Duplicate events found in final uniqueEventsToCreate.');
         }
         if (uniqueEventsToCreate.length === 0) {
-            console.error('[ERROR] No valid events to create. Exiting without deleting existing events.');
-            console.log('[SUMMARY] Event creation completed. Successfully created: 0, Failed: 0');
-            console.warn('[SUMMARY] No valid events were written to Google Calendar.');
+            logger.error('No valid events to create. Exiting without deleting existing events.');
+            logger.summary('Event creation completed. Successfully created: 0, Failed: 0');
+            logger.warn('No valid events were written to Google Calendar.');
             return;
         }
 
-        console.log(`[INFO] Creating ${uniqueEventsToCreate.length} events.`);
+        logger.info(`Creating ${uniqueEventsToCreate.length} events.`);
         await deleteUpcomingEvents(calendar);
 
         let successCount = 0;
@@ -223,7 +224,7 @@ async function connectToCalendar() {
                 successCount++;
                 console.log(`[INFO] Event created (${successCount}/${uniqueEventsToCreate.length}): ${event.summary}`);
             } catch (error) {
-                console.error(`[ERROR] Failed to create event: ${event.summary}`, error.message);
+                logger.error(`Failed to create event: ${event.summary}`, error.message);
                 // Add troubleshooting steps for common auth errors
                 if (
                     error &&
@@ -237,34 +238,30 @@ async function connectToCalendar() {
                     )
                 ) {
                     console.log('[TROUBLESHOOT] Common authentication issues:');
-                    console.log('  - Ensure credentials.json is present and valid (download from Google Cloud Console).');
-                    console.log('  - OAUTH2_REDIRECT_URI and CALENDAR_ID must be set in your .env file.');
-                    console.log('  - If you see "redirect_uri_mismatch", update your Google Cloud Console OAuth2 redirect URI.');
-                    console.log('  - If you see "invalid_grant", the authorization code may have expired. Try authorizing again.');
-                    console.log('  - If you see "invalid_request", check your credentials.json and .env for typos.');
-                    console.log('  - Make sure your Google Cloud project has the Calendar API enabled.');
-                    console.log('  - Delete token.json and re-run the script to reauthorize if token issues persist.');
+                    console.log('  - Ensure beacon-calendar-update.json is present and valid (download from Google Cloud Console).');
+                    console.log('  - CALENDAR_ID must be set in your .env file.');
+                    console.log('  - Make sure your Google Service Account has adequate permissions to the specified Google Calendar.');
                 }
                 failureCount++;
             }
         }
 
         // Output summary
-        console.log(`[SUMMARY] Event creation completed. Successfully created: ${successCount}, Failed: ${failureCount}`);
+        logger.info(`Event creation completed. Successfully created: ${successCount}, Failed: ${failureCount}`);
         process.exit(0); // Ensure clean exit after successful completion
     } catch (error) {
         if (error && error.message) {
-            console.error('[ERROR] Error connecting to the calendar:', error.message);
+            logger.error('Error connecting to the calendar:', error.message);
             if (error.stack && !error.message.includes('ENOENT')) {
-                console.error(error.stack);
+                logger.error(error.stack);
             }
         } else {
-            console.error('[ERROR] An unknown error occurred while connecting to the calendar:', error);
+            logger.error('An unknown error occurred while connecting to the calendar:', error);
         }
-        console.log('[SUMMARY] Event creation completed. Successfully created: 0, Failed: 0');
+        logger.summary('Event creation completed. Successfully created: 0, Failed: 0');
         process.exit(1); // Exit with error code
     } finally {
-        console.log('[INFO] connectToCalendar completed.');
+        logger.info('connectToCalendar completed.');
     }
 }
 
@@ -284,7 +281,7 @@ async function deleteUpcomingEvents(calendar) {
         const events = eventsResponse.data.items || [];
 
         if (events.length) {
-            console.log(`[INFO] Found ${events.length} upcoming events. Deleting them...`);
+            logger.info(`Found ${events.length} upcoming events. Deleting them...`);
             let deleteCount = 0;
             for (const event of events) {
                 try {
@@ -295,19 +292,19 @@ async function deleteUpcomingEvents(calendar) {
                     deleteCount++;
                     console.log(`[INFO] Deleted event (${deleteCount}/${events.length}): ${event.summary}`);
                 } catch (error) {
-                    console.error(`[ERROR] Failed to delete event: ${event.summary}`, error.message);
+                    logger.error(`Failed to delete event: ${event.summary}`, error.message);
                 }
             }
         } else {
-            console.info('[INFO] No upcoming events found to delete.');
-            console.log('[SUMMARY] No upcoming events to delete.');
+            logger.info('No upcoming events found to delete.');
+            logger.summary('No upcoming events to delete.');
         }
     } catch (error) {
-        console.error('[ERROR] Error deleting upcoming events:', error.message);
+        logger.error('Error deleting upcoming events:', error.message);
     }
 }
 
 connectToCalendar().catch(err => {
-    console.error('[ERROR] Unhandled exception in updateGCal.js:', err);
-    console.log('[SUMMARY] Event creation completed. Successfully created: 0, Failed: 0');
+    logger.error('Unhandled exception:', err);
+    logger.summary(0, 0, 1);
 });

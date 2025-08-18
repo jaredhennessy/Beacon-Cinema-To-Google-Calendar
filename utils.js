@@ -5,6 +5,7 @@
  */
 
 const fs = require('fs');
+const logger = require('./logger')('utils');
 
 /**
  * Ensures the CSV file at filePath starts with the expected header.
@@ -17,19 +18,19 @@ const fs = require('fs');
 function ensureHeader(filePath, expectedHeader) {
     if (!fs.existsSync(filePath)) {
         fs.writeFileSync(filePath, expectedHeader + '\n');
-        console.log(`[INFO] Created ${filePath} with header row.`);
+        logger.info(`Created ${filePath} with header row.`);
         return;
     }
     const content = fs.readFileSync(filePath, 'utf8').trim();
     if (!content) {
         fs.writeFileSync(filePath, expectedHeader + '\n');
-        console.warn(`[WARN] ${filePath} was empty. Header inserted.`);
+        logger.warn(`${filePath} was empty. Header inserted.`);
         return;
     }
     const firstLine = content.split('\n')[0];
     if (firstLine.replace(/\s/g, '').toLowerCase() !== expectedHeader.replace(/\s/g, '').toLowerCase()) {
         fs.writeFileSync(filePath, expectedHeader + '\n' + content);
-        console.warn(`[WARN] ${filePath} was missing a proper header row. Header inserted.`);
+        logger.warn(`${filePath} was missing a proper header row. Header inserted.`);
     }
 }
 
@@ -66,7 +67,7 @@ function warnIfDuplicateRows(filePath) {
         seen.add(line);
     }
     if (duplicateFound) {
-        console.warn(`[WARN] Duplicate rows found in ${filePath}.`);
+        logger.warn(`Duplicate rows found in ${filePath}.`);
     }
 }
 

@@ -18,16 +18,17 @@ const path = require('path');
 const { execSync } = require('child_process');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 const readline = require('readline');
+const logger = require('./logger')('beaconSchedule');
 const { ensureHeader, deduplicateRows } = require('./utils');
 
 process.on('unhandledRejection', (reason) => {
-    console.error('[ERROR] Unhandled promise rejection in beaconSchedule.js:', reason);
-    console.log('[SUMMARY] Total events processed: 0');
+    logger.error('Unhandled promise rejection:', reason);
+    logger.summary(0, 0, 1);
     process.exit(1);
 });
 
 (async () => {
-    console.log('[START] beaconSchedule.js');
+    logger.info('Starting beaconSchedule.js');
 
     const calendarUrl = 'https://thebeacon.film/calendar';
     const seriesCsvPath = path.join(__dirname, 'files', 'series.csv');
@@ -39,9 +40,8 @@ process.on('unhandledRejection', (reason) => {
     ensureHeader(seriesIndexCsvPath, 'seriesName,seriesURL,seriesTag');
 
     if (!fs.existsSync(seriesCsvPath)) {
-        console.error('[ERROR] files/series.csv is missing. Please run beaconSeries.js first.');
-        console.log('[SUMMARY] Total events processed: 0');
-        console.log('[SUMMARY] beaconSchedule.js finished. Total events processed: 0');
+        logger.error('files/series.csv is missing. Please run beaconSeries.js first.');
+        logger.summary(0, 0, 1);
         return;
     }
 
@@ -74,8 +74,7 @@ process.on('unhandledRejection', (reason) => {
         });
 
         if (!Array.isArray(titles) || titles.length === 0) {
-            console.info('[INFO] No event titles found on the calendar page.');
-            console.warn('[WARN] No titles found on the calendar page. The website structure may have changed.');
+            logger.warn('No titles found on the calendar page. The website structure may have changed.');
         }
 
         const titleMap = new Map(
@@ -89,7 +88,7 @@ process.on('unhandledRejection', (reason) => {
             .map(line => {
                 const fields = line.split(',').map(field => field.trim());
                 if (fields.length < 3) {
-                    console.warn('[WARN] Skipping malformed row in series.csv:', line);
+                    logger.warn('Skipping malformed row in series.csv:', line);
                     return [];
                 }
                 return fields;
@@ -100,7 +99,7 @@ process.on('unhandledRejection', (reason) => {
         for (const [title, seriesTag] of seriesRows) {
             const key = `${title}|${seriesTag}`;
             if (seenPairs.has(key)) {
-                console.warn(`[WARN] Duplicate Title/SeriesTag pair "${title}|${seriesTag}" found in series.csv.`);
+                logger.warn(`Duplicate Title/SeriesTag pair "${title}|${seriesTag}" found in series.csv.`);
             }
             seenPairs.add(key);
         }
@@ -113,7 +112,7 @@ process.on('unhandledRejection', (reason) => {
             const scheduleList = [];
             const eventBlocks = document.querySelectorAll('section[itemprop="name"]');
             if (eventBlocks.length === 0) {
-                console.warn('[WARN] No event blocks found. The website structure may have changed.');
+                logger.warn('No event blocks found. The website structure may have changed.');
             }
             eventBlocks.forEach(eventBlock => {
                 const title = eventBlock.textContent.trim();
@@ -133,8 +132,8 @@ process.on('unhandledRejection', (reason) => {
         });
 
         if (!Array.isArray(schedule) || schedule.length === 0) {
-            console.info('[INFO] No schedule data found on the calendar page.');
-            console.warn('[WARN] No schedule data found on the calendar page. The website structure may have changed.');
+            logger.warn('No schedule data found on the calendar page. The website structure may have changed.');
+            logger.info('No schedule data found on the calendar page.');
         }
 
         const today = new Date().toISOString().split('T')[0];
@@ -171,7 +170,7 @@ process.on('unhandledRejection', (reason) => {
                 dateRecorded
             }))
         );
-        console.log('[INFO] Removed future screenings from schedule.csv.');
+        logger.info('Removed future screenings from schedule.csv.');
 
         const currentTimestamp = new Date().toISOString();
         const scheduleWithSeriesTag = schedule
@@ -185,8 +184,8 @@ process.on('unhandledRejection', (reason) => {
             }));
 
         if (scheduleWithSeriesTag.length === 0) {
-            console.warn('[WARN] All events were skipped due to missing required fields.');
-            console.log('[SUMMARY] No valid events were written to schedule.csv.');
+            logger.warn('All events were skipped due to missing required fields.');
+            logger.info('No valid events were written to schedule.csv.');
         }
 
         // Deduplicate events by title/date/time
@@ -194,12 +193,12 @@ process.on('unhandledRejection', (reason) => {
         let duplicateWritten = uniqueEvents.length < scheduleWithSeriesTag.length;
 
         if (duplicateWritten) {
-            console.warn('[WARN] Duplicate events found in final written schedule.');
+            logger.warn('Duplicate events found in final written schedule.');
         }
 
         if (uniqueEvents.length === 0) {
-            console.warn('[WARN] No unique events to write. schedule.csv not updated.');
-            console.log('[SUMMARY] No new events were added to schedule.csv.');
+            logger.warn('No unique events to write. schedule.csv not updated.');
+            logger.info('No new events were added to schedule.csv.');
         } else {
             await scheduleCsvWriter.writeRecords(
                 uniqueEvents.map(event => ({
@@ -207,31 +206,31 @@ process.on('unhandledRejection', (reason) => {
                     title: titleMap.get(normalizeTitle(event.title)) || event.title
                 }))
             );
-            console.log(`[INFO] schedule.csv written successfully. ${uniqueEvents.length} events added.`);
+            logger.info(`schedule.csv written successfully. ${uniqueEvents.length} events added.`);
             // Ensure header after writing
             ensureHeader(scheduleCsvPath, 'Title,Date,Time,URL,SeriesTag,DateRecorded');
         }
         eventsAdded = uniqueEvents.length;
-        console.log(`[SUMMARY] Total events processed: ${eventsAdded}`);
+        logger.info(`Total events processed: ${eventsAdded}`);
 
     } catch (error) {
         if (error && error.message) {
-            console.error('[ERROR] An error occurred:', error.message);
+            logger.error('An error occurred:', error.message);
             if (error.stack && !error.message.includes('ENOENT')) {
-                console.error(error.stack);
+                logger.error(error.stack);
             }
             if (error.message.includes('no such file or directory') && error.message.includes('series.csv')) {
-                console.error('[ERROR] files/series.csv is missing. Please run beaconSeries.js first.');
+                logger.error('files/series.csv is missing. Please run beaconSeries.js first.');
             }
         } else {
-            console.error('[ERROR] An unknown error occurred:', error);
+            logger.error('An unknown error occurred:', error);
         }
-        console.log(`[SUMMARY] Total events processed: ${eventsAdded}`);
+        logger.info(`Total events processed: ${eventsAdded}`);
     } finally {
         if (browser) await browser.close();
-        console.log(`[SUMMARY] beaconSchedule.js finished. Total events processed: ${eventsAdded}`);
+        logger.info(`beaconSchedule.js finished. Total events processed: ${eventsAdded}`);
     }
 })().catch(err => {
-    console.error('[ERROR] Unhandled exception in beaconSchedule.js:', err);
-    console.log('[SUMMARY] Total events processed: 0');
+    logger.error('Unhandled exception in beaconSchedule.js:', err);
+    logger.info('Total events processed: 0');
 });

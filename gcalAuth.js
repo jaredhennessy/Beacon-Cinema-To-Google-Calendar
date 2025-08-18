@@ -19,28 +19,29 @@
 
 const fs = require('fs');
 const { google } = require('googleapis');
+const logger = require('./logger')('gcalAuth');
 
 const SERVICE_ACCOUNT_PATH = 'beacon-calendar-update.json';
 
 // Print common troubleshooting steps for authentication issues (service account)
 function printAuthTroubleshooting() {
-    console.log('[TROUBLESHOOT] Common authentication issues:');
-    console.log('  - Ensure beacon-calendar-update.json (service account key) is present and valid in the project root.');
-    console.log('  - CALENDAR_ID must be set in your .env file.');
-    console.log('  - Make sure your Google Cloud project has the Calendar API enabled.');
-    console.log('  - The service account email must be added as an editor to your target Google Calendar (in the Google Calendar UI).');
-    console.log('  - If you see a permissions error, double-check calendar sharing and the service account email.');
-    console.log('  - OAuth2 and token.json are no longer used.');
+    logger.warn('Common authentication issues:');
+    logger.warn('  - Ensure beacon-calendar-update.json (service account key) is present and valid in the project root.');
+    logger.warn('  - CALENDAR_ID must be set in your .env file.');
+    logger.warn('  - Make sure your Google Cloud project has the Calendar API enabled.');
+    logger.warn('  - The service account email must be added as an editor to your target Google Calendar (in the Google Calendar UI).');
+    logger.warn('  - If you see a permissions error, double-check calendar sharing and the service account email.');
+    logger.warn('  - OAuth2 and token.json are no longer used.');
 }
 
 process.on('unhandledRejection', (reason) => {
-    console.error('[ERROR] Unhandled promise rejection in gcalAuth.js:', reason);
+    logger.error('Unhandled promise rejection:', reason);
     printAuthTroubleshooting();
     process.exit(1);
 });
 
 if (require.main === module) {
-    console.error('[ERROR] gcalAuth.js is a library and should not be run directly.');
+    logger.error('gcalAuth.js is a library and should not be run directly.');
     process.exit(1);
 }
 

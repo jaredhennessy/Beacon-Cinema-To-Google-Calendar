@@ -18,22 +18,23 @@ const csvParser = require('csv-parser');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 const readline = require('readline');
 const { ensureHeader, deduplicateRows } = require('./utils');
+const logger = require('./logger')('findRuntimes');
 
 process.on('unhandledRejection', (reason) => {
-    console.error('[ERROR] Unhandled promise rejection in findRuntimes.js:', reason);
-    console.log('[SUMMARY] Total runtimes processed: 0');
+    logger.error('Unhandled promise rejection:', reason);
+    logger.summary(0, 0, 1);
     process.exit(1);
 });
 
 (async () => {
-    console.log('[START] findRuntimes.js');
+    logger.info('Starting findRuntimes.js');
 
     const scheduleCsvPath = path.join(__dirname, 'files', 'schedule.csv');
     const runtimesCsvPath = path.join(__dirname, 'files', 'runtimes.csv');
 
     if (!fs.existsSync(scheduleCsvPath)) {
-        console.error(`[ERROR] ${scheduleCsvPath} does not exist.`);
-        console.log('[SUMMARY] Total runtimes processed: 0');
+        logger.error(`${scheduleCsvPath} does not exist.`);
+        logger.summary(0, 0, 1);
         return;
     }
 
@@ -46,7 +47,7 @@ process.on('unhandledRejection', (reason) => {
             output: process.stdout,
         });
         const timeout = setTimeout(() => {
-            console.log('[INFO] No input received. Proceeding without replacing runtimes.csv.');
+            logger.info('No input received. Proceeding without replacing runtimes.csv.');
             rl.close();
             resolve(false);
         }, 5000);
@@ -60,9 +61,9 @@ process.on('unhandledRejection', (reason) => {
     if (shouldReplaceRuntimes) {
         if (fs.existsSync(runtimesCsvPath)) {
             fs.unlinkSync(runtimesCsvPath);
-            console.log('[INFO] Existing runtimes.csv deleted.');
+            logger.info('Existing runtimes.csv deleted.');
         } else {
-            console.warn('[WARN] No existing runtimes.csv to delete.');
+            logger.warn('No existing runtimes.csv to delete.');
         }
     }
 
@@ -103,7 +104,7 @@ process.on('unhandledRejection', (reason) => {
             .pipe(csvParser())
             .on('data', (row) => {
                 if (!row || typeof row !== 'object') {
-                    console.warn('[WARN] Skipping malformed row in schedule.csv:', row);
+                    logger.warn('Skipping malformed row in schedule.csv:', row);
                     return;
                 }
                 if (row.URL && row.Title && !processedTitles.has(row.Title.trim())) {
@@ -113,33 +114,33 @@ process.on('unhandledRejection', (reason) => {
                     urls.set(row.URL, row.Title.trim());
                     urlSet.add(key);
                 } else if (!row.URL || !row.Title) {
-                    console.warn('[WARN] Skipping row in schedule.csv with missing URL or Title:', row);
+                    logger.warn('Skipping row in schedule.csv with missing URL or Title:', row);
                 }
             })
             .on('end', resolve)
             .on('error', reject);
     });
     if (duplicateTitleUrlFound) {
-        console.warn('[WARN] Duplicate Title/URL pairs found in schedule.csv.');
+        logger.warn('Duplicate Title/URL pairs found in schedule.csv.');
     }
     if (allSkippedForMissingFields) {
-        console.warn('[WARN] All URLs were skipped due to missing Title or URL.');
+        logger.warn('All URLs were skipped due to missing Title or URL.');
     }
 
     if (urls.size === 0) {
-        console.warn('[WARN] No URLs to process after filtering. Exiting.');
-        console.log('[SUMMARY] Total runtimes processed: 0');
+        logger.warn('No URLs to process after filtering. Exiting.');
+        logger.info('Total runtimes processed: 0');
         return;
     }
 
-    console.log(`[INFO] Found ${urls.size} unique URLs to process.`);
+    logger.info(`Found ${urls.size} unique URLs to process.`);
 
     let browser;
     const results = [];
     try {
         browser = await puppeteer.launch();
         for (const [url, title] of urls.entries()) {
-            console.log(`[INFO] Processing URL: ${url} for Title: ${title}`);
+            logger.info(`Processing URL: ${url} for Title: ${title}`);
             const page = await browser.newPage();
             try {
                 await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
@@ -155,32 +156,32 @@ process.on('unhandledRejection', (reason) => {
                     return null;
                 });
                 if (runtime) {
-                    console.log(`[INFO] Found Runtime: ${runtime} for Title: ${title}`);
+                    logger.info(`Found Runtime: ${runtime} for Title: ${title}`);
                     results.push({ Title: title, Runtime: runtime });
                 } else {
-                    console.warn(`[WARN] Runtime not found for URL: ${url}`);
+                    logger.warn(`Runtime not found for URL: ${url}`);
                 }
             } catch (error) {
                 if (error && error.message) {
-                    console.error(`[ERROR] Error processing URL: ${url} - ${error.message}`);
+                    logger.error(`Error processing URL: ${url} - ${error.message}`);
                     if (
                         error.message.includes('net::ERR_NAME_NOT_RESOLVED') ||
                         error.message.includes('Invalid URL') ||
                         error.message.includes('net::ERR_CONNECTION_REFUSED')
                     ) {
-                        console.error(`[ERROR] Navigation error: Unable to access "${url}".`);
+                        logger.error(`Navigation error: Unable to access "${url}".`);
                     }
                     if (error.message.includes('Navigation timeout')) {
-                        console.error(`[ERROR] Navigation timeout: "${url}" may be down or slow.`);
+                        logger.error(`Navigation timeout: "${url}" may be down or slow.`);
                     }
                     if (error.message.includes('404') || error.message.includes('500')) {
-                        console.error(`[ERROR] HTTP error (${error.message}) for "${url}".`);
+                        logger.error(`HTTP error (${error.message}) for "${url}".`);
                     }
                     if (error.stack && !error.message.includes('ENOENT')) {
-                        console.error(error.stack);
+                        logger.error(error.stack);
                     }
                 } else {
-                    console.error(`[ERROR] Unknown error processing URL: ${url}`, error);
+                    logger.error(`Unknown error processing URL: ${url}`, error);
                 }
             } finally {
                 await page.close();
@@ -188,12 +189,12 @@ process.on('unhandledRejection', (reason) => {
         }
     } catch (error) {
         if (error && error.message) {
-            console.error('[ERROR] An error occurred while processing URLs:', error.message);
+            logger.error('An error occurred while processing URLs:', error.message);
             if (error.stack && !error.message.includes('ENOENT')) {
-                console.error(error.stack);
+                logger.error(error.stack);
             }
         } else {
-            console.error('[ERROR] An unknown error occurred while processing URLs:', error);
+            logger.error('An unknown error occurred while processing URLs:', error);
         }
     } finally {
         if (browser) await browser.close();
@@ -205,25 +206,25 @@ process.on('unhandledRejection', (reason) => {
 
     let runtimesAdded = uniqueResults.length;
     if (uniqueResults.length === 0) {
-        console.warn('[WARN] No unique runtimes to write. runtimes.csv not updated.');
+        logger.warn('No unique runtimes to write. runtimes.csv not updated.');
         if (!fs.existsSync(runtimesCsvPath)) {
             await csvWriter.writeRecords([]);
-            console.log('[INFO] runtimes.csv header written.');
+            logger.info('runtimes.csv header written.');
         }
-        console.log('[SUMMARY] No new runtimes were added to runtimes.csv.');
-        console.warn('[WARN] No valid runtimes written for any event.');
+        logger.info('No new runtimes were added to runtimes.csv.');
+        logger.warn('No valid runtimes written for any event.');
     } else {
         await csvWriter.writeRecords(uniqueResults);
-        console.log(`[INFO] Runtimes written to ${runtimesCsvPath} (${uniqueResults.length} new records).`);
+        logger.info(`Runtimes written to ${runtimesCsvPath} (${uniqueResults.length} new records).`);
         ensureHeader(runtimesCsvPath, 'Title,Runtime');
     }
     if (runtimesAdded === 0) {
-        console.log('[INFO] No new runtimes found. Script completed successfully.');
+        logger.info('No new runtimes found. Script completed successfully.');
     }
     // Output summary
     // The summary provides a concise overview of the script's execution, including the number of runtimes processed.
-    console.log(`[SUMMARY] Total runtimes processed: ${runtimesAdded}`);
+    logger.info(`Total runtimes processed: ${runtimesAdded}`);
 })().catch(err => {
-    console.error('[ERROR] Unhandled exception in findRuntimes.js:', err);
-    console.log('[SUMMARY] Total runtimes processed: 0');
+    logger.error('Unhandled exception in findRuntimes.js:', err);
+    logger.info('Total runtimes processed: 0');
 });

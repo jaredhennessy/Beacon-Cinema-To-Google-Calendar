@@ -28,15 +28,16 @@ const path = require('path');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 const csvParser = require('csv-parser');
 const { ensureHeader, deduplicateRows } = require('./utils');
+const logger = require('./logger')('beaconSeries');
 
 process.on('unhandledRejection', (reason) => {
-    console.error('[ERROR] Unhandled promise rejection in beaconSeries.js:', reason);
-    console.log('[SUMMARY] Processed: 0, Skipped: 0');
+    logger.error('Unhandled promise rejection:', reason);
+    logger.summary(0, 0, 1);
     process.exit(1);
 });
 
 (async () => {
-    console.log('[START] beaconSeries.js');
+    logger.info('Starting beaconSeries.js');
     const seriesIndexCsvPath = path.join(__dirname, 'files', 'seriesIndex.csv');
     const seriesCsvPath = path.join(__dirname, 'files', 'series.csv');
 
@@ -49,8 +50,8 @@ process.on('unhandledRejection', (reason) => {
         ensureHeader(seriesIndexCsvPath, 'seriesName,seriesURL,seriesTag');
 
         if (!fs.existsSync(seriesIndexCsvPath)) {
-            console.error(`[ERROR] ${seriesIndexCsvPath} does not exist.`);
-            console.log(`[SUMMARY] Processed: 0, Skipped: 0`);
+            logger.error(`${seriesIndexCsvPath} does not exist.`);
+            logger.summary(0, 0, 1);
             process.exit(1);
         }
 
@@ -61,7 +62,7 @@ process.on('unhandledRejection', (reason) => {
                 .pipe(csvParser())
                 .on('data', (row) => {
                     if (!row || typeof row !== 'object') {
-                        console.warn('[WARN] Skipping malformed row in seriesIndex.csv:', row);
+                        logger.warn('Skipping malformed row in seriesIndex.csv:', row);
                         return;
                     }
                     out.push(row);
@@ -90,21 +91,21 @@ process.on('unhandledRejection', (reason) => {
         processedCount = pc;
         skippedCount = sc;
 
-        console.log(`[SUMMARY] Processed: ${processedCount}, Skipped: ${skippedCount}`);
+        logger.summary(`Processed: ${processedCount}, Skipped: ${skippedCount}`);
         process.exit(0);
     } catch (error) {
         if (error && error.message) {
-            console.error('[ERROR] Error reading seriesIndex.csv:', error.message);
+            logger.error('Error reading seriesIndex.csv:', error.message);
             if (error.stack && !error.message.includes('ENOENT')) {
-                console.error(error.stack);
+                logger.error(error.stack);
             }
             if (error.message.includes('no such file or directory') && error.message.includes('seriesIndex.csv')) {
-                console.error('[ERROR] files/seriesIndex.csv is missing. Please create or update this file.');
+                logger.error('files/seriesIndex.csv is missing. Please create or update this file.');
             }
         } else {
-            console.error('[ERROR] An unknown error occurred:', error);
+            logger.error('An unknown error occurred:', error);
         }
-        console.log(`[SUMMARY] Processed: ${processedCount}, Skipped: ${skippedCount}`);
+        logger.summary(`Processed: ${processedCount}, Skipped: ${skippedCount}`);
         process.exit(1);
     }
 })();
@@ -118,23 +119,24 @@ async function executeScript(seriesUrl, seriesTag, seriesCsvPath, allTitles) {
         browser = await puppeteer.launch();
         const page = await browser.newPage();
 
-        console.log(`[INFO] Navigating to ${seriesUrl}...`);
+        logger.info(`Navigating to ${seriesUrl}...`);
         await page.goto(seriesUrl, { waitUntil: 'networkidle2', timeout: 30000 });
 
         // Extract titles from the page
         const seriesTitles = await page.evaluate(() => {
             const titleElements = document.querySelectorAll('h1, h2, h3, h4, h5, h6, strong, em');
             const titles = Array.from(titleElements).map(el => el.textContent.trim());
+            console.log('Found titles:', titles); // This logs in browser context
             const startIndex = titles.findIndex(title => title.toUpperCase() === 'FILMS IN THIS PROGRAM');
             if (startIndex === -1) {
-                console.warn('[WARN] Start index for "Films in this Program" not found. Returning no titles.');
+                logger.warn('Start index for "Films in this Program" not found. Returning no titles.');
                 return [];
             }
             return titles.slice(startIndex + 1);
         });
 
         if (!Array.isArray(seriesTitles) || seriesTitles.length === 0) {
-            console.warn('[WARN] No titles found on the page. Skipping this series.');
+            logger.warn('No titles found on the page. Skipping this series.');
             return [];
         }
 
@@ -146,16 +148,16 @@ async function executeScript(seriesUrl, seriesTag, seriesCsvPath, allTitles) {
         }
         const duplicateTitles = Object.entries(titleCounts).filter(([t, count]) => count > 1);
         if (duplicateTitles.length > 0) {
-            console.warn(`[WARN] Duplicate titles found in scraped titles for SeriesTag "${seriesTag}": ${duplicateTitles.map(([t]) => t).join(', ')}`);
+            logger.warn(`Duplicate titles found in scraped titles for SeriesTag "${seriesTag}": ${duplicateTitles.map(([t]) => t).join(', ')}`);
         }
         filteredTitles = [...new Set(filteredTitles)];
 
         if (filteredTitles.length === 0) {
-            console.warn('[WARN] No valid titles extracted. Skipping this series.');
+            logger.warn('No valid titles extracted. Skipping this series.');
             return [];
         }
 
-        console.log(`[INFO] Extracted ${filteredTitles.length} valid titles.`);
+        logger.info(`Extracted ${filteredTitles.length} valid titles.`);
 
         const currentTimestamp = new Date().toISOString();
         let seriesRecords = filteredTitles.map(title => ({
@@ -173,8 +175,8 @@ async function executeScript(seriesUrl, seriesTag, seriesCsvPath, allTitles) {
         }
 
         if (seriesRecords.length === 0) {
-            console.log('[INFO] No new records to write for this series.');
-            console.warn('[WARN] No valid series records written for SeriesTag:', seriesTag);
+            logger.info('No new records to write for this series.');
+            logger.warn('No valid series records written for SeriesTag:', seriesTag);
             return [];
         }
 
@@ -182,28 +184,28 @@ async function executeScript(seriesUrl, seriesTag, seriesCsvPath, allTitles) {
         return seriesRecords;
     } catch (error) {
         if (error && error.message) {
-            console.error('[ERROR] An error occurred:', error.message);
+            logger.error('An error occurred:', error.message);
             if (error.stack && !error.message.includes('ENOENT')) {
-                console.error(error.stack);
+                logger.error(error.stack);
             }
             if (
                 error.message.includes('net::ERR_NAME_NOT_RESOLVED') ||
                 error.message.includes('Invalid URL') ||
                 error.message.includes('net::ERR_CONNECTION_REFUSED')
             ) {
-                console.error(`[ERROR] Unable to navigate to series URL "${seriesUrl}". Please check the URL in seriesIndex.csv.`);
+                logger.error(`Unable to navigate to series URL "${seriesUrl}". Please check the URL in seriesIndex.csv.`);
             }
             if (error.message.includes('Navigation timeout')) {
-                console.error(`[ERROR] Navigation to "${seriesUrl}" timed out. The site may be down or slow.`);
+                logger.error(`Navigation to "${seriesUrl}" timed out. The site may be down or slow.`);
             }
             if (
                 error.message.includes('404') ||
                 error.message.includes('500')
             ) {
-                console.error(`[ERROR] Received HTTP error (${error.message}) for "${seriesUrl}". The page may not exist or is temporarily unavailable.`);
+                logger.error(`Received HTTP error (${error.message}) for "${seriesUrl}". The page may not exist or is temporarily unavailable.`);
             }
         } else {
-            console.error('[ERROR] An unknown error occurred:', error);
+            logger.error('An unknown error occurred:', error);
         }
         return [];
     } finally {
@@ -217,17 +219,17 @@ async function processSeriesRows(rows, existingRows, seriesCsvPath, allTitles, s
     let skippedCount = 0;
     let allSkippedForMissingFields = true;
     if (rows.length > 0) {
-        console.log(`[INFO] Found ${rows.length} series in ${seriesIndexCsvPath}.`);
+        logger.info(`Found ${rows.length} series in ${seriesIndexCsvPath}.`);
         const seenTags = new Set();
         let allNewRecords = [];
         for (const row of rows) {
             if (!row.seriesURL || !row.seriesTag) {
-                console.warn('[WARN] Skipping row with missing seriesURL or seriesTag:', row);
+                logger.warn('Skipping row with missing seriesURL or seriesTag:', row);
                 skippedCount++;
                 continue;
             }
             if (seenTags.has(row.seriesTag)) {
-                console.warn(`[WARN] Duplicate seriesTag "${row.seriesTag}" found in seriesIndex.csv.`);
+                logger.warn(`Duplicate seriesTag "${row.seriesTag}" found in seriesIndex.csv.`);
             }
             seenTags.add(row.seriesTag);
             const newRecords = await executeScript(row.seriesURL, row.seriesTag, seriesCsvPath, allTitles);
@@ -256,10 +258,10 @@ async function processSeriesRows(rows, existingRows, seriesCsvPath, allTitles, s
         await csvWriter.writeRecords([...filteredExisting, ...allNewRecords]);
         ensureHeader(seriesCsvPath, 'Title,SeriesTag,DateRecorded');
         if (allSkippedForMissingFields) {
-            console.warn('[WARN] All series were skipped due to missing required fields.');
+            logger.warn('All series were skipped due to missing required fields.');
         }
     } else {
-        console.warn('[WARN] No rows found in seriesIndex.csv.');
+        logger.warn('No rows found in seriesIndex.csv.');
     }
     return { processedCount, skippedCount };
 }
