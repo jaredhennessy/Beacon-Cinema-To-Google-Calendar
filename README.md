@@ -138,7 +138,7 @@ Run the complete update process:
 ```bash
 npm start
 ```
-
+      - A service account with a JSON key (downloaded as `beacon-calendar-update.json`)
 or
 
 ```bash
@@ -156,7 +156,7 @@ This script sequentially executes the following steps, prompting before each (wi
 
 You can also run each script individually as needed:
 
-#### Film Series Update
+      - `beacon-calendar-update.json` (Google service account credentials, in project root)
 
 ```bash
 node beaconSeries.js
@@ -176,7 +176,7 @@ node beaconSchedule.js
 - Scrapes the current calendar from the Beacon website.
 - Updates `files/schedule.csv`.
 - Removes past screenings.
-- Matches films to series using `files/series.csv`.
+     - `token.json`: (No longer used; previously for OAuth2 user authentication.)
 - Deduplicates events and warns about duplicates.
 
 #### Runtime Information

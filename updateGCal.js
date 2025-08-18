@@ -15,7 +15,7 @@ const { google } = require('googleapis');
 const dotenv = require('dotenv');
 const csv = require('csv-parser');
 const path = require('path');
-const { getAccessToken } = require('./gcalAuth');
+const { getServiceAccountClient } = require('./gcalAuth');
 const { ensureHeader, deduplicateRows } = require('./utils');
 
 dotenv.config();
@@ -46,49 +46,17 @@ function formatString(str) {
         .join(' ');
 }
 
-if (!process.env.OAUTH2_REDIRECT_URI || !process.env.CALENDAR_ID) {
-    console.error('[ERROR] OAUTH2_REDIRECT_URI and CALENDAR_ID must be set in your .env file.');
+if (!process.env.CALENDAR_ID) {
+    console.error('[ERROR] CALENDAR_ID must be set in your .env file.');
     process.exit(1);
 }
 
 async function connectToCalendar() {
     console.log('[START] updateGCal.js');
     try {
-        if (!fs.existsSync('credentials.json')) {
-            console.error('[ERROR] credentials.json file is missing.');
-            process.exit(1);
-        }
-
-        const credentials = JSON.parse(fs.readFileSync('credentials.json', 'utf8'));
-        const { client_secret, client_id } = credentials.web;
-
-        const oAuth2Client = new google.auth.OAuth2(
-            client_id,
-            client_secret,
-            process.env.OAUTH2_REDIRECT_URI
-        );
-
-        if (fs.existsSync(TOKEN_PATH)) {
-            try {
-                const token = fs.readFileSync(TOKEN_PATH, 'utf8');
-                oAuth2Client.setCredentials(JSON.parse(token));
-            } catch (e) {
-                console.error('[ERROR] token.json is malformed. Please delete and reauthorize.');
-                console.log('[SUMMARY] Event creation completed. Successfully created: 0, Failed: 0');
-                process.exit(1);
-            }
-        } else {
-            console.log('[INFO] No token found. Starting authorization flow...');
-            await getAccessToken(oAuth2Client); // Wait for authorization to complete
-        }
-
-        if (!oAuth2Client.credentials || !oAuth2Client.credentials.access_token) {
-            console.error('[ERROR] OAuth2 client is not authenticated. Exiting...');
-            console.log('[TROUBLESHOOT] Your token may be expired or missing. Try deleting token.json and re-running the script.');
-            process.exit(1); // Ensure this exit happens only if authentication fails
-        }
-
-        const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
+    // Authenticate using service account
+    const serviceAccountClient = getServiceAccountClient();
+    const calendar = google.calendar({ version: 'v3', auth: serviceAccountClient });
 
         const seriesIndexPath = path.join(__dirname, 'files', 'seriesIndex.csv');
         const runtimesCsvPath = path.join(__dirname, 'files', 'runtimes.csv');
