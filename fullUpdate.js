@@ -11,19 +11,18 @@
  * Dependencies: ./utils.js, ./logger.js
  */
 
+// External dependencies
 const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const readline = require('readline');
-const { ensureHeader, warnIfDuplicateRows } = require('./utils');
-const logger = require('./logger')('fullUpdate');
 
-// Global unhandled rejection handler
-process.on('unhandledRejection', (reason) => {
-    logger.error('Unhandled promise rejection:', reason);
-    logger.error('fullUpdate.js failed due to an unhandled exception.');
-    process.exit(1);
-});
+// Internal dependencies
+const { ensureHeader, warnIfDuplicateRows, checkFile } = require('./utils');
+const logger = require('./logger')('fullUpdate');
+const { setupErrorHandling, handleError } = require('./errorHandler');
+
+setupErrorHandling(logger, 'fullUpdate.js');
 
 // Node.js version check
 const minNodeVersion = 14;
@@ -35,59 +34,79 @@ if (nodeMajor < minNodeVersion) {
 }
 
 function runScript(script, label, stepNum) {
+    // Parameter validation
+    if (!script || typeof script !== 'string') {
+        throw new Error('runScript: script must be a non-empty string');
+    }
+    if (!label || typeof label !== 'string') {
+        throw new Error('runScript: label must be a non-empty string');
+    }
+    if (typeof stepNum !== 'number' || stepNum < 1) {
+        throw new Error('runScript: stepNum must be a positive number');
+    }
+    
     try {
         logger.info(`[STEP ${stepNum}] Running ${label}...`);
         execSync(`node ${path.join(__dirname, script)}`, { stdio: 'inherit' });
         logger.info(`[STEP ${stepNum}] ${label} completed.`);
     } catch (error) {
-        logger.error(`[STEP ${stepNum}] ${label} failed:`, error.message);
-        logger.error(`fullUpdate.js stopped at step ${stepNum}. Please check the logs for ${label}.`);
-        process.exit(1);
+        handleError(logger, error, `[STEP ${stepNum}] ${label} failed`, true);
     }
 }
 
+/**
+ * Checks that all required files and directories exist before running the pipeline
+ * @returns {void}
+ */
 // Ensure required files and directories exist before running pipeline
 function checkRequiredFiles() {
-    const required = [
+    // Check for script files
+    const requiredScripts = [
         'beaconSeries.js',
         'beaconSchedule.js',
         'findRuntimes.js',
-        'updateGCal.js',
-        'files/seriesIndex.csv',
-        'files/series.csv'
+        'updateGCal.js'
     ];
-    // Ensure files directory exists
-    const filesDir = path.join(__dirname, 'files');
-    if (!fs.existsSync(filesDir)) {
-        logger.error('Required directory missing: files/');
-        logger.error('fullUpdate.js did not run due to missing files directory.');
-        process.exit(1);
+    
+    for (const script of requiredScripts) {
+        checkFile(path.join(__dirname, script), {
+            required: true,
+            missingMessage: `Required script ${script} is missing`,
+            parentScript: 'fullUpdate.js'
+        });
     }
-    for (const file of required) {
-        const filePath = path.join(__dirname, file);
-        if (!fs.existsSync(filePath)) {
-            // Special handling for series.csv: create with header if missing
-            if (file.endsWith('series.csv')) {
-                const expectedHeader = 'Title,SeriesTag,DateRecorded';
-                fs.writeFileSync(filePath, expectedHeader + '\n');
-                logger.warn(`${file} was missing. Created with header row.`);
-                continue;
-            }
-            logger.error(`Required file missing: ${file}`);
-            logger.error('fullUpdate.js did not run due to missing file.');
-            process.exit(1);
-        }
-        // Check for required CSV headers
-        if (file.endsWith('.csv')) {
-            let expectedHeader = '';
-            if (file.endsWith('seriesIndex.csv')) expectedHeader = 'seriesName,seriesURL,seriesTag';
-            if (file.endsWith('series.csv')) expectedHeader = 'Title,SeriesTag,DateRecorded';
-            if (expectedHeader) ensureHeader(filePath, expectedHeader);
-        }
-    }
+
+    // Create files directory if needed
+    checkFile(path.join(__dirname, 'files', '.gitkeep'), {
+        createIfMissing: true,
+        parentScript: 'fullUpdate.js'
+    });
+
+    // Check and set up CSV files
+    checkFile(path.join(__dirname, 'files', 'seriesIndex.csv'), {
+        required: true,
+        createIfMissing: true,
+        initialContent: 'seriesName,seriesURL,seriesTag\n',
+        missingMessage: 'seriesIndex.csv is required to map film titles to series',
+        parentScript: 'fullUpdate.js'
+    });
+
+    checkFile(path.join(__dirname, 'files', 'series.csv'), {
+        createIfMissing: true,
+        initialContent: 'Title,SeriesTag,DateRecorded\n',
+        parentScript: 'fullUpdate.js'
+    });
 }
 
 function checkStepOutput(file, label) {
+    // Parameter validation
+    if (!file || typeof file !== 'string') {
+        throw new Error('checkStepOutput: file must be a non-empty string');
+    }
+    if (!label || typeof label !== 'string') {
+        throw new Error('checkStepOutput: label must be a non-empty string');
+    }
+    
     const filePath = path.join(__dirname, file);
     if (!fs.existsSync(filePath)) {
         logger.error(`Expected output file missing after ${label}: ${file}`);
@@ -118,6 +137,11 @@ function checkStepOutput(file, label) {
 }
 
 async function promptToRunScript(scriptName) {
+    // Parameter validation
+    if (!scriptName || typeof scriptName !== 'string') {
+        throw new Error('promptToRunScript: scriptName must be a non-empty string');
+    }
+    
     return new Promise((resolve) => {
         const rl = readline.createInterface({
             input: process.stdin,
@@ -137,7 +161,18 @@ async function promptToRunScript(scriptName) {
 }
 
 async function runConditionalScript(script, label, stepNum) {
-        const shouldRun = await promptToRunScript(label);
+    // Parameter validation
+    if (!script || typeof script !== 'string') {
+        throw new Error('runConditionalScript: script must be a non-empty string');
+    }
+    if (!label || typeof label !== 'string') {
+        throw new Error('runConditionalScript: label must be a non-empty string');
+    }
+    if (typeof stepNum !== 'number' || stepNum < 1) {
+        throw new Error('runConditionalScript: stepNum must be a positive number');
+    }
+    
+    const shouldRun = await promptToRunScript(label);
         if (shouldRun) {
             runScript(script, label, stepNum);
         } else {
@@ -147,7 +182,7 @@ async function runConditionalScript(script, label, stepNum) {
 
 (async () => {
     try {
-        logger.info('[START] fullUpdate.js');
+        logger.info('Starting fullUpdate.js');
         checkRequiredFiles();
 
         await runConditionalScript('beaconSeries.js', 'beaconSeries.js', 1);
@@ -161,11 +196,9 @@ async function runConditionalScript(script, label, stepNum) {
 
         await runConditionalScript('updateGCal.js', 'updateGCal.js', 4);
 
-        logger.info('[COMPLETE] All steps finished successfully.');
-        logger.info('[SUMMARY] fullUpdate.js completed all steps.');
+        logger.info('fullUpdate.js completed all steps.');
     } catch (err) {
-        logger.error('[ERROR] Unhandled exception in fullUpdate.js:', err);
-        logger.error('[SUMMARY] fullUpdate.js failed due to an unhandled exception.');
+        logger.error('Unhandled exception in fullUpdate.js:', err);
         process.exit(1);
     }
 })();

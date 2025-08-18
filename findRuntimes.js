@@ -11,20 +11,20 @@
  * Dependencies: puppeteer, csv-parser, csv-writer, readline, ./utils.js
  */
 
+// External dependencies
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
 const csvParser = require('csv-parser');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 const readline = require('readline');
-const { ensureHeader, deduplicateRows } = require('./utils');
-const logger = require('./logger')('findRuntimes');
 
-process.on('unhandledRejection', (reason) => {
-    logger.error('Unhandled promise rejection:', reason);
-    logger.summary(0, 0, 1);
-    process.exit(1);
-});
+// Internal dependencies
+const { ensureHeader, deduplicateRows, checkFile, navigateWithRetry } = require('./utils');
+const logger = require('./logger')('findRuntimes');
+const { setupErrorHandling, handleError } = require('./errorHandler');
+
+setupErrorHandling(logger, 'findRuntimes.js');
 
 (async () => {
     logger.info('Starting findRuntimes.js');
@@ -32,11 +32,12 @@ process.on('unhandledRejection', (reason) => {
     const scheduleCsvPath = path.join(__dirname, 'files', 'schedule.csv');
     const runtimesCsvPath = path.join(__dirname, 'files', 'runtimes.csv');
 
-    if (!fs.existsSync(scheduleCsvPath)) {
-        logger.error(`${scheduleCsvPath} does not exist.`);
-        logger.summary(0, 0, 1);
-        return;
-    }
+    // Check for schedule.csv - required input
+    checkFile(scheduleCsvPath, {
+        required: true,
+        missingMessage: 'schedule.csv is required but missing. Please run beaconSchedule.js first.',
+        parentScript: 'findRuntimes.js'
+    });
 
     ensureHeader(scheduleCsvPath, 'Title,Date,Time,URL,SeriesTag,DateRecorded');
 
@@ -143,7 +144,12 @@ process.on('unhandledRejection', (reason) => {
             logger.info(`Processing URL: ${url} for Title: ${title}`);
             const page = await browser.newPage();
             try {
-                await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+                const navigationSuccess = await navigateWithRetry(page, url, { logger });
+                if (!navigationSuccess) {
+                    logger.error(`Failed to load ${url} after retries`);
+                    results.push({ url, title, runtime: 'N/A' });
+                    continue;
+                }
                 // Try to extract runtime from the page
                 // The logic below attempts to find an element with the text "runtime" and retrieves the text of its sibling element.
                 const runtime = await page.evaluate(() => {
@@ -204,7 +210,7 @@ process.on('unhandledRejection', (reason) => {
     // This logic ensures that only unique titles are written to the CSV, avoiding duplicates.
     const uniqueResults = deduplicateRows(results, rec => rec.Title);
 
-    let runtimesAdded = uniqueResults.length;
+    const runtimesAdded = uniqueResults.length;
     if (uniqueResults.length === 0) {
         logger.warn('No unique runtimes to write. runtimes.csv not updated.');
         if (!fs.existsSync(runtimesCsvPath)) {

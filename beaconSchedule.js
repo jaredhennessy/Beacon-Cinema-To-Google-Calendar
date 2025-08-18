@@ -2,7 +2,6 @@
  * beaconSchedule.js
  * Scrapes event data from The Beacon Film Calendar and updates files/schedule.csv.
  * Usage: node beaconSchedule.js
- * - Optionally runs beaconSeries.js to update files/series.csv before scraping.
  * - Scrapes event titles, dates, times, and URLs from the calendar page.
  * - Matches titles with SeriesTag from files/series.csv.
  * - Adds a DateRecorded timestamp to each record.
@@ -12,20 +11,20 @@
  * Dependencies: puppeteer, csv-writer, readline, ./utils.js
  */
 
+// External dependencies
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 const readline = require('readline');
-const logger = require('./logger')('beaconSchedule');
-const { ensureHeader, deduplicateRows } = require('./utils');
 
-process.on('unhandledRejection', (reason) => {
-    logger.error('Unhandled promise rejection:', reason);
-    logger.summary(0, 0, 1);
-    process.exit(1);
-});
+// Internal dependencies
+const logger = require('./logger')('beaconSchedule');
+const { ensureHeader, deduplicateRows, checkFile, navigateWithRetry } = require('./utils');
+const { setupErrorHandling, handleError } = require('./errorHandler');
+
+setupErrorHandling(logger, 'beaconSchedule.js');
 
 (async () => {
     logger.info('Starting beaconSchedule.js');
@@ -35,15 +34,23 @@ process.on('unhandledRejection', (reason) => {
     const scheduleCsvPath = path.join(__dirname, 'files', 'schedule.csv');
     const seriesIndexCsvPath = path.join(__dirname, 'files', 'seriesIndex.csv');
 
-    ensureHeader(seriesCsvPath, 'Title,SeriesTag,DateRecorded');
-    ensureHeader(scheduleCsvPath, 'Title,Date,Time,URL,SeriesTag,DateRecorded');
-    ensureHeader(seriesIndexCsvPath, 'seriesName,seriesURL,seriesTag');
+    // Check and set up required CSV files
+    checkFile(seriesIndexCsvPath, {
+        required: true,
+        createIfMissing: true,
+        initialContent: 'seriesName,seriesURL,seriesTag\n',
+        missingMessage: 'seriesIndex.csv is required to map film titles to series. Please create it and try again.'
+    });
 
-    if (!fs.existsSync(seriesCsvPath)) {
-        logger.error('files/series.csv is missing. Please run beaconSeries.js first.');
-        logger.summary(0, 0, 1);
-        return;
-    }
+    // series.csv is required and must exist (created by beaconSeries.js)
+    checkFile(seriesCsvPath, {
+        required: true,
+        missingMessage: 'series.csv is missing. Please run beaconSeries.js first.',
+        parentScript: 'beaconSchedule.js'
+    });
+
+    // schedule.csv will be created/updated by this script
+    ensureHeader(scheduleCsvPath, 'Title,Date,Time,URL,SeriesTag,DateRecorded');
 
     const scheduleCsvWriter = createCsvWriter({
         path: scheduleCsvPath,
@@ -65,7 +72,11 @@ process.on('unhandledRejection', (reason) => {
         browser = await puppeteer.launch();
         const page = await browser.newPage();
 
-        await page.goto(calendarUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+        const navigationSuccess = await navigateWithRetry(page, calendarUrl, { logger });
+        if (!navigationSuccess) {
+            logger.error('Failed to load calendar page after retries');
+            return;
+        }
         // Extract event titles from the page
         const titles = await page.evaluate(() => {
             const titleElements = document.querySelectorAll('section[itemprop="name"]');
@@ -189,8 +200,8 @@ process.on('unhandledRejection', (reason) => {
         }
 
         // Deduplicate events by title/date/time
-        let uniqueEvents = deduplicateRows(scheduleWithSeriesTag, event => `${event.title}|${event.date}|${event.time}`);
-        let duplicateWritten = uniqueEvents.length < scheduleWithSeriesTag.length;
+        const uniqueEvents = deduplicateRows(scheduleWithSeriesTag, event => `${event.title}|${event.date}|${event.time}`);
+        const duplicateWritten = uniqueEvents.length < scheduleWithSeriesTag.length;
 
         if (duplicateWritten) {
             logger.warn('Duplicate events found in final written schedule.');

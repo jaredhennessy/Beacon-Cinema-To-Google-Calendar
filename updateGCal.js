@@ -19,14 +19,18 @@
  * Dependencies: googleapis, dotenv, csv-parser, ./gcalAuth.js, ./utils.js
  */
 
+// External dependencies
 const fs = require('fs');
 const { google } = require('googleapis');
 const dotenv = require('dotenv');
 const csv = require('csv-parser');
 const path = require('path');
+
+// Internal dependencies
 const { getServiceAccountClient } = require('./gcalAuth');
-const { ensureHeader, deduplicateRows } = require('./utils');
+const { ensureHeader, deduplicateRows, checkFile } = require('./utils');
 const logger = require('./logger')('updateGCal');
+const { setupErrorHandling, handleError } = require('./errorHandler');
 
 dotenv.config();
 
@@ -34,13 +38,22 @@ const TOKEN_PATH = 'token.json';
 const SCHEDULE_CSV_PATH = path.join(__dirname, 'files', 'schedule.csv');
 const TIME_ZONE = process.env.TIME_ZONE || 'America/Los_Angeles';
 
-process.on('unhandledRejection', (reason) => {
-    logger.error('Unhandled promise rejection:', reason);
-    logger.summary(0, 0, 1);
-    process.exit(1);
-});
+setupErrorHandling(logger, 'updateGCal.js');
 
+/**
+ * Formats a string to title case with proper capitalization
+ * @param {string} str - String to format
+ * @returns {string} Formatted string in title case
+ */
 function formatString(str) {
+    // Parameter validation
+    if (str === null || str === undefined) {
+        return '';
+    }
+    if (typeof str !== 'string') {
+        throw new Error('formatString: str must be a string');
+    }
+    
     return str
         .replace(/^"|"$/g, '')
         .split(' ')
@@ -61,25 +74,29 @@ if (!process.env.CALENDAR_ID) {
     process.exit(1);
 }
 
+/**
+ * Connects to Google Calendar and processes the schedule update workflow
+ * @returns {Promise<void>}
+ */
 async function connectToCalendar() {
     logger.info('Starting updateGCal.js');
     try {
-    // Authenticate using service account
-    const serviceAccountClient = getServiceAccountClient();
-    const calendar = google.calendar({ version: 'v3', auth: serviceAccountClient });
+        // Authenticate using service account
+        const serviceAccountClient = getServiceAccountClient();
+        const calendar = google.calendar({ version: 'v3', auth: serviceAccountClient });
 
         const seriesIndexPath = path.join(__dirname, 'files', 'seriesIndex.csv');
         const runtimesCsvPath = path.join(__dirname, 'files', 'runtimes.csv');
         const seriesMap = new Map();
 
-        if (!fs.existsSync(SCHEDULE_CSV_PATH)) {
-            logger.error(`${SCHEDULE_CSV_PATH} does not exist. Please run beaconSchedule.js first.`);
-            logger.summary('Event creation completed. Successfully created: 0, Failed: 0');
-            return;
-        }
+        // Check for required files
+        checkFile(SCHEDULE_CSV_PATH, {
+            required: true,
+            missingMessage: 'schedule.csv is required but missing. Please run beaconSchedule.js first.',
+            parentScript: 'updateGCal.js'
+        });
 
-        // Ensure header for all CSVs before reading/writing
-        ensureHeader(SCHEDULE_CSV_PATH, 'Title,Date,Time,URL,SeriesTag,DateRecorded');
+        // Optional files - will be created if missing
         ensureHeader(runtimesCsvPath, 'Title,Runtime');
         ensureHeader(seriesIndexPath, 'seriesName,seriesURL,seriesTag');
 
@@ -144,15 +161,15 @@ async function connectToCalendar() {
                         : '';
 
                     const descriptionParts = [];
-                    let runtimeValue = runtimesMap.get(row.Title) || runtimesMap.get(row.Title.trim());
+                    const runtimeValue = runtimesMap.get(row.Title) || runtimesMap.get(row.Title.trim());
                     if (runtimeValue) descriptionParts.push(`Runtime: ${runtimeValue}`);
                     if (formattedSeriesName) descriptionParts.push(`Film Series: ${formattedSeriesName}`);
                     if (row.URL) descriptionParts.push(`URL: ${row.URL}`);
                     const description = descriptionParts.join('\n');
 
-                    let startDateTime = new Date(`${row.Date}T${row.Time}`);
+                    const startDateTime = new Date(`${row.Date}T${row.Time}`);
                     let endDateTime;
-                    let runtimeMatch = runtimeValue && runtimeValue.match(/^(\d+)\s*minutes$/i);
+                    const runtimeMatch = runtimeValue && runtimeValue.match(/^(\d+)\s*minutes$/i);
                     if (runtimeMatch) {
                         const runtimeMinutes = parseInt(runtimeMatch[1], 10) + 15;
                         endDateTime = new Date(startDateTime.getTime() + runtimeMinutes * 60000);
@@ -191,20 +208,18 @@ async function connectToCalendar() {
 
         if (eventsToCreate.length === 0) {
             logger.warn('No events to create after parsing schedule.csv. Exiting.');
-            logger.summary('Event creation completed. Successfully created: 0, Failed: 0');
             return;
         }
 
         // Deduplicate events by summary/start time
         const uniqueEventsToCreate = deduplicateRows(eventsToCreate, event => `${event.summary}|${event.start.dateTime}`);
-        let duplicateWritten = uniqueEventsToCreate.length < eventsToCreate.length;
+        const duplicateWritten = uniqueEventsToCreate.length < eventsToCreate.length;
 
         if (duplicateWritten) {
             logger.warn('Duplicate events found in final uniqueEventsToCreate.');
         }
         if (uniqueEventsToCreate.length === 0) {
             logger.error('No valid events to create. Exiting without deleting existing events.');
-            logger.summary('Event creation completed. Successfully created: 0, Failed: 0');
             logger.warn('No valid events were written to Google Calendar.');
             return;
         }
@@ -258,7 +273,6 @@ async function connectToCalendar() {
         } else {
             logger.error('An unknown error occurred while connecting to the calendar:', error);
         }
-        logger.summary('Event creation completed. Successfully created: 0, Failed: 0');
         process.exit(1); // Exit with error code
     } finally {
         logger.info('connectToCalendar completed.');
@@ -267,6 +281,11 @@ async function connectToCalendar() {
 
 // Delete all upcoming events from the calendar
 async function deleteUpcomingEvents(calendar) {
+    // Parameter validation
+    if (!calendar || typeof calendar !== 'object') {
+        throw new Error('deleteUpcomingEvents: calendar must be a valid calendar client object');
+    }
+    
     try {
         const calendarId = process.env.CALENDAR_ID;
         const today = new Date().toISOString();
@@ -297,7 +316,6 @@ async function deleteUpcomingEvents(calendar) {
             }
         } else {
             logger.info('No upcoming events found to delete.');
-            logger.summary('No upcoming events to delete.');
         }
     } catch (error) {
         logger.error('Error deleting upcoming events:', error.message);
