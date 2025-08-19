@@ -288,7 +288,8 @@ async function deleteUpcomingEvents(calendar) {
     
     try {
         const calendarId = process.env.CALENDAR_ID;
-        const today = new Date().toISOString();
+        // Use the same date cutoff as event creation logic for consistency
+        const today = new Date().toISOString().split('T')[0] + 'T00:00:00.000Z';
 
         const eventsResponse = await calendar.events.list({
             calendarId,

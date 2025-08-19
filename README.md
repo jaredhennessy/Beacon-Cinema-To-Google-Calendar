@@ -289,6 +289,16 @@ node updateGCal.js
 | findRuntimes.js    | Extracts runtime info for each scheduled film and updates `files/runtimes.csv`          |
 | updateGCal.js      | Syncs the schedule to Google Calendar (deletes all upcoming events, then adds new ones) |
 | fullUpdate.js      | Runs all the above scripts in sequence, with prompts                                    |
+| clearLogs.js       | Utility to empty all log files in the `logs/` directory for maintenance                 |
+
+## NPM Scripts
+
+For convenience, some common tasks are available as npm scripts:
+
+```bash
+npm start           # Runs fullUpdate.js
+npm run clear-logs  # Empties all log files using clearLogs.js
+```
 
 ## Troubleshooting
 

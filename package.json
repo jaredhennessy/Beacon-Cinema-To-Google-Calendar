@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "main": "fullUpdate.js",
   "scripts": {
-    "start": "node fullUpdate.js"
+    "start": "node fullUpdate.js",
+    "clear-logs": "node clearLogs.js"
   },
   "dependencies": {
     "@google-cloud/local-auth": "^2.1.0",
