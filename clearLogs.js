@@ -67,7 +67,7 @@ async function clearAllLogs() {
                 clearedCount++;
                 
             } catch (error) {
-                handleError(logger, error, `Failed to clear ${logFile}`);
+                handleError(logger, error instanceof Error ? error : new Error(String(error)), `Failed to clear ${logFile}`);
                 errorCount++;
             }
         }
@@ -83,7 +83,7 @@ async function clearAllLogs() {
         }
         
     } catch (error) {
-        handleError(logger, error, 'Log cleanup failed', true);
+        handleError(logger, error instanceof Error ? error : new Error(String(error)), 'Log cleanup failed', true);
     }
 }
 

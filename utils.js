@@ -271,16 +271,16 @@ async function navigateWithRetry(page, url, options = {}) {
 
     for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
         try {
-            pageLogger.info(`Navigating to ${url}${attempt > 1 ? ` (attempt ${attempt})` : ''}...`);
-            await page.goto(url, { waitUntil, timeout });
+            /** @type {any} */ (pageLogger).info(`Navigating to ${url}${attempt > 1 ? ` (attempt ${attempt})` : ''}...`);
+            await /** @type {any} */ (page).goto(url, { waitUntil, timeout });
             return true;
         } catch (error) {
-            if (error.message.includes('Navigation timeout')) {
+            if (error instanceof Error && error.message.includes('Navigation timeout')) {
                 if (attempt <= maxRetries) {
-                    pageLogger.warn(`Navigation timeout for ${url}, retrying (${attempt}/${maxRetries})...`);
+                    /** @type {any} */ (pageLogger).warn(`Navigation timeout for ${url}, retrying (${attempt}/${maxRetries})...`);
                     continue;
                 } else {
-                    pageLogger.error(`Navigation timeout for ${url} after ${maxRetries} retries`);
+                    /** @type {any} */ (pageLogger).error(`Navigation timeout for ${url} after ${maxRetries} retries`);
                     return false;
                 }
             } else {

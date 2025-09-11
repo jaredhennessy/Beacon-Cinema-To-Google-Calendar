@@ -72,7 +72,7 @@ async function executeScript(seriesUrl, seriesTag, seriesCsvPath, allTitles) {
             DateRecorded: new Date().toISOString()
         }));
     } catch (error) {
-        handleError(logger, error, `Error scraping series at ${seriesUrl}`);
+        handleError(logger, error instanceof Error ? error : new Error(String(error)), `Error scraping series at ${seriesUrl}`);
         return [];
     }
 }
@@ -138,7 +138,7 @@ async function processSeriesRows(rows, existingRows, seriesCsvPath, allTitles, s
 
         return { processedCount, skippedCount };
     } catch (error) {
-        handleError(logger, error, 'Error processing series rows', true);
+        handleError(logger, error instanceof Error ? error : new Error(String(error)), 'Error processing series rows', true);
         return { processedCount: 0, skippedCount: 0 };
     }
 }
@@ -162,7 +162,9 @@ async function processSeriesRows(rows, existingRows, seriesCsvPath, allTitles, s
         ensureHeader(seriesIndexCsvPath, 'seriesName,seriesURL,seriesTag');
         ensureHeader(seriesCsvPath, 'Title,SeriesTag,DateRecorded');
         
+        /** @type {Array<{seriesName: string, seriesURL: string, seriesTag: string}>} */
         const rows = [];
+        /** @type {Array<{Title: string, SeriesTag: string, DateRecorded: string}>} */
         const existingRows = [];
         const allTitles = new Set();
         
@@ -193,6 +195,6 @@ async function processSeriesRows(rows, existingRows, seriesCsvPath, allTitles, s
         clearTimeout(globalTimeout);
     } catch (error) {
         clearTimeout(globalTimeout);
-        handleError(logger, error, 'Error in beaconSeries.js', true);
+        handleError(logger, error instanceof Error ? error : new Error(String(error)), 'Error in beaconSeries.js', true);
     }
 })();
