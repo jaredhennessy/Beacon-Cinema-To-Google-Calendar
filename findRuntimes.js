@@ -1,26 +1,24 @@
 /**
  * findRuntimes.js
- * Extracts runtime information for events listed in files/schedule.csv and updates files/runtimes.csv.
+ * Extracts runtime information for events listed in Google Sheet 'schedule' and updates Google Sheet 'runtimes'.
  * Usage: node findRuntimes.js
- * - Prompts to replace runtimes.csv (5s timeout).
- * - Reads files/schedule.csv for unique event URLs.
- * - Skips titles already present in files/runtimes.csv with a non-empty Runtime.
+ * - Prompts to replace runtimes (5s timeout).
+ * - Reads Google Sheet 'schedule' for unique event URLs.
+ * - Skips titles already present in Google Sheet 'runtimes' with a non-empty Runtime.
  * - Uses Puppeteer to extract runtime info from each URL.
- * - Writes results to files/runtimes.csv (Title, Runtime).
- * - Ensures header row exists in runtimes.csv.
- * Dependencies: puppeteer, csv-parser, csv-writer, readline, ./utils.js
+ * - Writes results to Google Sheet 'runtimes' (Title, Runtime).
+ * - Ensures header row exists in Google Sheet 'runtimes'.
+ * Dependencies: puppeteer, readline, ./sheetsUtils.js, ./utils.js
  */
 
 // External dependencies
 const puppeteer = require('puppeteer');
-const fs = require('fs');
-const path = require('path');
-const csvParser = require('csv-parser');
-const createCsvWriter = require('csv-writer').createObjectCsvWriter;
+// Removed path dependency; now uses Google Sheets
+const { getSheetRows, setSheetRows } = require('./sheetsUtils');
 const readline = require('readline');
 
 // Internal dependencies
-const { ensureHeader, deduplicateRows, checkFile, navigateWithRetry } = require('./utils');
+const { deduplicateRows, navigateWithRetry } = require('./utils');
 const logger = require('./logger')('findRuntimes');
 const { setupErrorHandling, handleError } = require('./errorHandler');
 
@@ -29,19 +27,27 @@ setupErrorHandling(logger, 'findRuntimes.js');
 (async () => {
     logger.info('Starting findRuntimes.js');
 
-    const scheduleCsvPath = path.join(__dirname, 'files', 'schedule.csv');
-    const runtimesCsvPath = path.join(__dirname, 'files', 'runtimes.csv');
+    // Read schedule from Google Sheet
+    const scheduleRowsRaw = await getSheetRows('schedule');
+    const scheduleHeader = scheduleRowsRaw[0] || [];
+    const scheduleRows = scheduleRowsRaw.length > 1 ? scheduleRowsRaw.slice(1).map(line => {
+        return {
+            Title: line[scheduleHeader.indexOf('Title')],
+            URL: line[scheduleHeader.indexOf('URL')],
+        };
+    }).filter(row => row.Title && row.URL) : [];
 
-    // Check for schedule.csv - required input
-    checkFile(scheduleCsvPath, {
-        required: true,
-        missingMessage: 'schedule.csv is required but missing. Please run beaconSchedule.js first.',
-        parentScript: 'findRuntimes.js'
-    });
+    // Read runtimes from Google Sheet
+    const runtimesRowsRaw = await getSheetRows('runtimes');
+    const runtimesHeader = runtimesRowsRaw[0] || [];
+    const runtimesRows = runtimesRowsRaw.length > 1 ? runtimesRowsRaw.slice(1).map(line => {
+        return {
+            Title: line[runtimesHeader.indexOf('Title')],
+            Runtime: line[runtimesHeader.indexOf('Runtime')],
+        };
+    }).filter(row => row.Title && row.Runtime) : [];
 
-    ensureHeader(scheduleCsvPath, 'Title,Date,Time,URL,SeriesTag,DateRecorded');
-
-    // Prompt user to replace runtimes.csv (5s timeout)
+    // Prompt user to replace runtimes (5s timeout)
     const shouldReplaceRuntimes = await new Promise((resolve) => {
         const rl = readline.createInterface({
             input: process.stdin,
@@ -59,70 +65,31 @@ setupErrorHandling(logger, 'findRuntimes.js');
         });
     });
 
-    if (shouldReplaceRuntimes) {
-        if (fs.existsSync(runtimesCsvPath)) {
-            fs.unlinkSync(runtimesCsvPath);
-            logger.info('Existing runtimes.csv deleted.');
-        } else {
-            logger.warn('No existing runtimes.csv to delete.');
-        }
-    }
+    // Collect processed titles from runtimes sheet
+    const processedTitles = new Set(runtimesRows.map(row => row.Title.trim()));
 
-    ensureHeader(runtimesCsvPath, 'Title,Runtime');
-
-    const csvWriter = createCsvWriter({
-        path: runtimesCsvPath,
-        header: [
-            { id: 'Title', title: 'Title' },
-            { id: 'Runtime', title: 'Runtime' }
-        ],
-        append: true
-    });
-
-    // Collect processed titles from runtimes.csv
-    const processedTitles = new Set();
-    if (fs.existsSync(runtimesCsvPath)) {
-        await new Promise((resolve, reject) => {
-            fs.createReadStream(runtimesCsvPath)
-                .pipe(csvParser())
-                .on('data', (row) => {
-                    if (row.Title && row.Runtime) {
-                        processedTitles.add(row.Title.trim());
-                    }
-                })
-                .on('end', resolve)
-                .on('error', reject);
-        });
-    }
-
-    // Collect URLs and titles from schedule.csv, skipping already processed
+    // Collect URLs and titles from schedule sheet, skipping already processed
     const urls = new Map();
     const urlSet = new Set();
     let allSkippedForMissingFields = true;
     let duplicateTitleUrlFound = false;
-    await new Promise((resolve, reject) => {
-        fs.createReadStream(scheduleCsvPath)
-            .pipe(csvParser())
-            .on('data', (row) => {
-                if (!row || typeof row !== 'object') {
-                    logger.warn('Skipping malformed row in schedule.csv:', row);
-                    return;
-                }
-                if (row.URL && row.Title && !processedTitles.has(row.Title.trim())) {
-                    allSkippedForMissingFields = false;
-                    const key = `${row.Title.trim()}|${row.URL}`;
-                    if (urlSet.has(key)) duplicateTitleUrlFound = true;
-                    urls.set(row.URL, row.Title.trim());
-                    urlSet.add(key);
-                } else if (!row.URL || !row.Title) {
-                    logger.warn('Skipping row in schedule.csv with missing URL or Title:', row);
-                }
-            })
-            .on('end', resolve)
-            .on('error', reject);
-    });
+    for (const row of scheduleRows) {
+        if (!row || typeof row !== 'object') {
+            logger.warn('Skipping malformed row in schedule sheet:', row);
+            continue;
+        }
+        if (row.URL && row.Title && !processedTitles.has(row.Title.trim())) {
+            allSkippedForMissingFields = false;
+            const key = `${row.Title.trim()}|${row.URL}`;
+            if (urlSet.has(key)) duplicateTitleUrlFound = true;
+            urls.set(row.URL, row.Title.trim());
+            urlSet.add(key);
+        } else if (!row.URL || !row.Title) {
+            logger.warn('Skipping row in schedule sheet with missing URL or Title:', row);
+        }
+    }
     if (duplicateTitleUrlFound) {
-        logger.warn('Duplicate Title/URL pairs found in schedule.csv.');
+        logger.warn('Duplicate Title/URL pairs found in schedule sheet.');
     }
     if (allSkippedForMissingFields) {
         logger.warn('All URLs were skipped due to missing Title or URL.');
@@ -212,25 +179,30 @@ setupErrorHandling(logger, 'findRuntimes.js');
 
     const runtimesAdded = uniqueResults.length;
     if (uniqueResults.length === 0) {
-        logger.warn('No unique runtimes to write. runtimes.csv not updated.');
-        if (!fs.existsSync(runtimesCsvPath)) {
-            await csvWriter.writeRecords([]);
-            logger.info('runtimes.csv header written.');
+        logger.warn('No unique runtimes to write. runtimes (Google Sheet) not updated.');
+        // Write header if sheet is empty
+        if (!runtimesRowsRaw.length) {
+            await setSheetRows('runtimes', [['Title', 'Runtime']]);
+            logger.info('runtimes (Google Sheet) header written.');
         }
-        logger.info('No new runtimes were added to runtimes.csv.');
+        logger.info('No new runtimes were added to runtimes (Google Sheet).');
         logger.warn('No valid runtimes written for any event.');
     } else {
-        await csvWriter.writeRecords(uniqueResults);
-        logger.info(`Runtimes written to ${runtimesCsvPath} (${uniqueResults.length} new records).`);
-        ensureHeader(runtimesCsvPath, 'Title,Runtime');
+        // Write unique runtimes to Google Sheet
+        const sheetRows = [
+            ['Title', 'Runtime'],
+            ...uniqueResults.map(event => [event.Title, event.Runtime])
+        ];
+        await setSheetRows('runtimes', sheetRows);
+        logger.info(`Runtimes written to runtimes (Google Sheet) (${uniqueResults.length} new records).`);
     }
     if (runtimesAdded === 0) {
         logger.info('No new runtimes found. Script completed successfully.');
     }
     // Output summary
-    // The summary provides a concise overview of the script's execution, including the number of runtimes processed.
     logger.info(`Total runtimes processed: ${runtimesAdded}`);
 })().catch(err => {
     logger.error('Unhandled exception in findRuntimes.js:', err);
     logger.info('Total runtimes processed: 0');
 });
+

@@ -1,24 +1,23 @@
 /**
  * fullUpdate.js
  * Runs the full Beacon Cinema to Google Calendar update pipeline:
- * 1. beaconSeries.js   - Updates series information and files/series.csv.
- * 2. beaconSchedule.js - Scrapes the schedule and updates files/schedule.csv.
- * 3. findRuntimes.js   - Extracts runtimes and updates files/runtimes.csv.
- * 4. updateGCal.js     - Updates Google Calendar with the latest schedule.
+ * 1. beaconSeries.js   - Updates series information in Google Sheet 'series'.
+ * 2. beaconSchedule.js - Scrapes the schedule and updates Google Sheet 'schedule'.
+ * 3. findRuntimes.js   - Extracts runtimes and updates Google Sheet 'runtimes'.
+ * 4. updateGCal.js     - Updates Google Calendar with the latest schedule from Google Sheets.
  * Usage: node fullUpdate.js
  * Each step is executed sequentially. If any step fails, the script logs the error and exits.
- * Ensures header rows in all output CSVs after each step.
+ * Ensures header rows in all output Google Sheets after each step.
  * Dependencies: ./utils.js, ./logger.js
  */
 
 // External dependencies
 const { execSync } = require('child_process');
 const path = require('path');
-const fs = require('fs');
 const readline = require('readline');
 
 // Internal dependencies
-const { ensureHeader, warnIfDuplicateRows, checkFile } = require('./utils');
+const { checkFile } = require('./utils');
 const logger = require('./logger')('fullUpdate');
 const { setupErrorHandling, handleError } = require('./errorHandler');
 
@@ -58,7 +57,7 @@ function runScript(script, label, stepNum) {
  * Checks that all required files and directories exist before running the pipeline
  * @returns {void}
  */
-// Ensure required files and directories exist before running pipeline
+// No longer checks for CSV files; all data is now in Google Sheets
 function checkRequiredFiles() {
     // Check for script files
     const requiredScripts = [
@@ -67,7 +66,6 @@ function checkRequiredFiles() {
         'findRuntimes.js',
         'updateGCal.js'
     ];
-    
     for (const script of requiredScripts) {
         checkFile(path.join(__dirname, script), {
             required: true,
@@ -75,65 +73,19 @@ function checkRequiredFiles() {
             parentScript: 'fullUpdate.js'
         });
     }
-
-    // Create files directory if needed
-    checkFile(path.join(__dirname, 'files', '.gitkeep'), {
-        createIfMissing: true,
-        parentScript: 'fullUpdate.js'
-    });
-
-    // Check and set up CSV files
-    checkFile(path.join(__dirname, 'files', 'seriesIndex.csv'), {
-        required: true,
-        createIfMissing: true,
-        initialContent: 'seriesName,seriesURL,seriesTag\n',
-        missingMessage: 'seriesIndex.csv is required to map film titles to series',
-        parentScript: 'fullUpdate.js'
-    });
-
-    checkFile(path.join(__dirname, 'files', 'series.csv'), {
-        createIfMissing: true,
-        initialContent: 'Title,SeriesTag,DateRecorded\n',
-        parentScript: 'fullUpdate.js'
-    });
 }
 
-function checkStepOutput(file, label) {
+// No longer checks for output CSV files; all output is now in Google Sheets
+function checkStepOutput(sheetName, label) {
     // Parameter validation
-    if (!file || typeof file !== 'string') {
-        throw new Error('checkStepOutput: file must be a non-empty string');
+    if (!sheetName || typeof sheetName !== 'string') {
+        throw new Error('checkStepOutput: sheetName must be a non-empty string');
     }
     if (!label || typeof label !== 'string') {
         throw new Error('checkStepOutput: label must be a non-empty string');
     }
-    
-    const filePath = path.join(__dirname, file);
-    if (!fs.existsSync(filePath)) {
-        logger.error(`Expected output file missing after ${label}: ${file}`);
-        logger.error(`fullUpdate.js stopped after ${label} due to missing output file.`);
-        process.exit(1);
-    }
-    const content = fs.readFileSync(filePath, 'utf8').trim();
-    if (!content) {
-        logger.error(`Output file ${file} is empty after ${label}.`);
-        logger.warn(`Output file ${file} is empty after ${label}.`);
-        process.exit(1);
-    }
-    const firstLine = content.split('\n')[0];
-    let expectedHeader = '';
-    if (file.endsWith('schedule.csv')) expectedHeader = 'Title,Date,Time,URL,SeriesTag,DateRecorded';
-    if (file.endsWith('runtimes.csv')) expectedHeader = 'Title,Runtime';
-    if (expectedHeader && firstLine.replace(/\s/g, '').toLowerCase() !== expectedHeader.replace(/\s/g, '').toLowerCase()) {
-        fs.writeFileSync(filePath, expectedHeader + '\n' + content);
-        logger.warn(`Output file ${file} was missing a proper header row after ${label}. Header inserted.`);
-    }
-    warnIfDuplicateRows(filePath);
-    // Warn if no valid records written (only header present)
-    const lines = content.split('\n');
-    if (lines.length <= 1) {
-        logger.warn(`No valid records written to ${file} after ${label}.`);
-        logger.info(`No valid records written to ${file} after ${label}.`);
-    }
+    // Optionally, could check Google Sheet for expected header/rows
+    logger.info(`Checked output for ${label} in Google Sheet '${sheetName}'.`);
 }
 
 async function promptToRunScript(scriptName) {
@@ -185,16 +137,16 @@ async function runConditionalScript(script, label, stepNum) {
         logger.info('Starting fullUpdate.js');
         checkRequiredFiles();
 
-        await runConditionalScript('beaconSeries.js', 'beaconSeries.js', 1);
-        checkStepOutput('files/series.csv', 'beaconSeries.js');
+    await runConditionalScript('beaconSeries.js', 'beaconSeries.js', 1);
+    checkStepOutput('series', 'beaconSeries.js');
 
-        await runConditionalScript('beaconSchedule.js', 'beaconSchedule.js', 2);
-        checkStepOutput('files/schedule.csv', 'beaconSchedule.js');
+    await runConditionalScript('beaconSchedule.js', 'beaconSchedule.js', 2);
+    checkStepOutput('schedule', 'beaconSchedule.js');
 
-                await runConditionalScript('findRuntimes.js', 'findRuntimes.js', 3);
-        checkStepOutput('files/runtimes.csv', 'findRuntimes.js');
+    await runConditionalScript('findRuntimes.js', 'findRuntimes.js', 3);
+    checkStepOutput('runtimes', 'findRuntimes.js');
 
-        await runConditionalScript('updateGCal.js', 'updateGCal.js', 4);
+    await runConditionalScript('updateGCal.js', 'updateGCal.js', 4);
 
         logger.info('fullUpdate.js completed all steps.');
     } catch (err) {

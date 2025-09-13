@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: beacon-cinema-calendar-sync
+    env: node
+    buildCommand: 'npm install'
+    startCommand: 'npm start'
+    envVars:
+      - key: CALENDAR_ID
+        sync: false
+      - key: TIME_ZONE
+        sync: false
+    autoDeploy: true
+    plan: free
+    rootDir: .
+    # Optionally, add disk for persistent logs or files
+    # disks:
+    #   - name: data
+    #     mountPath: /data

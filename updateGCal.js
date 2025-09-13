@@ -1,6 +1,6 @@
 /**
  * updateGCal.js
- * Synchronizes The Beacon Cinema schedule (from files/schedule.csv) with a Google Calendar.
+ * Synchronizes The Beacon Cinema schedule (from Google Sheet 'schedule') with a Google Calendar.
  * 
  * Usage: node updateGCal.js
  * 
@@ -8,34 +8,30 @@
  * - Deletes all upcoming events from the specified Google Calendar
  * - Creates new events with runtime and series info if available
  * - Uses service account authentication (no OAuth2 or tokens needed)
- * - Ensures header rows in all CSVs
+ * - Ensures header rows in all Google Sheets
  * - Provides error handling and clear output messages
  * 
  * Required files:
  * - beacon-calendar-update.json (service account key)
  * - .env with CALENDAR_ID
- * - files/schedule.csv
  * 
- * Dependencies: googleapis, dotenv, csv-parser, ./gcalAuth.js, ./utils.js
+ * Dependencies: googleapis, dotenv, ./gcalAuth.js, ./sheetsUtils.js, ./utils.js
  */
 
 // External dependencies
-const fs = require('fs');
 const { google } = require('googleapis');
 const dotenv = require('dotenv');
-const csv = require('csv-parser');
-const path = require('path');
+// Removed path dependency; now uses Google Sheets
+const { getSheetRows } = require('./sheetsUtils');
 
 // Internal dependencies
 const { getServiceAccountClient } = require('./gcalAuth');
-const { ensureHeader, deduplicateRows, checkFile } = require('./utils');
+const { deduplicateRows } = require('./utils');
 const logger = require('./logger')('updateGCal');
 const { setupErrorHandling, handleError } = require('./errorHandler');
 
 dotenv.config();
 
-const TOKEN_PATH = 'token.json';
-const SCHEDULE_CSV_PATH = path.join(__dirname, 'files', 'schedule.csv');
 const TIME_ZONE = process.env.TIME_ZONE || 'America/Los_Angeles';
 
 setupErrorHandling(logger, 'updateGCal.js');
@@ -85,119 +81,110 @@ async function connectToCalendar() {
         const serviceAccountClient = getServiceAccountClient();
         const calendar = google.calendar({ version: 'v3', auth: serviceAccountClient });
 
-        const seriesIndexPath = path.join(__dirname, 'files', 'seriesIndex.csv');
-        const runtimesCsvPath = path.join(__dirname, 'files', 'runtimes.csv');
-        const seriesMap = new Map();
-
-        // Check for required files
-        checkFile(SCHEDULE_CSV_PATH, {
-            required: true,
-            missingMessage: 'schedule.csv is required but missing. Please run beaconSchedule.js first.',
-            parentScript: 'updateGCal.js'
-        });
-
-        // Optional files - will be created if missing
-        ensureHeader(runtimesCsvPath, 'Title,Runtime');
-        ensureHeader(seriesIndexPath, 'seriesName,seriesURL,seriesTag');
-
+        // Read runtimes from Google Sheet
+        const runtimesRowsRaw = await getSheetRows('runtimes');
+        const runtimesHeader = runtimesRowsRaw[0] || [];
         const runtimesMap = new Map();
-        if (fs.existsSync(runtimesCsvPath)) {
-            await new Promise((resolve, reject) => {
-                fs.createReadStream(runtimesCsvPath)
-                    .pipe(csv())
-                    .on('data', row => {
-                        if (row.Title && row.Runtime) {
-                            runtimesMap.set(row.Title.trim(), row.Runtime.trim());
-                        }
-                    })
-                    .on('end', resolve)
-                    .on('error', reject);
-            });
+        if (runtimesRowsRaw.length > 1) {
+            for (const line of runtimesRowsRaw.slice(1)) {
+                const title = line[runtimesHeader.indexOf('Title')];
+                const runtime = line[runtimesHeader.indexOf('Runtime')];
+                if (title && runtime) runtimesMap.set(title.trim(), runtime.trim());
+            }
         }
 
-        await new Promise((resolve, reject) => {
-            fs.createReadStream(seriesIndexPath)
-                .pipe(csv())
-                .on('data', row => {
-                    if (row.seriesTag && row.seriesName) {
-                        seriesMap.set(row.seriesTag.trim(), row.seriesName.trim());
-                    }
-                })
-                .on('end', resolve)
-                .on('error', reject);
-        });
+        // Read seriesIndex from Google Sheet
+        const seriesIndexRowsRaw = await getSheetRows('seriesIndex');
+        const seriesIndexHeader = seriesIndexRowsRaw[0] || [];
+        const seriesMap = new Map();
+        if (seriesIndexRowsRaw.length > 1) {
+            for (const line of seriesIndexRowsRaw.slice(1)) {
+                const seriesTag = line[seriesIndexHeader.indexOf('seriesTag')];
+                const seriesName = line[seriesIndexHeader.indexOf('seriesName')];
+                if (seriesTag && seriesName) seriesMap.set(seriesTag.trim(), seriesName.trim());
+            }
+        }
 
+        // Read schedule from Google Sheet
+        const scheduleRowsRaw = await getSheetRows('schedule');
+        const scheduleHeader = scheduleRowsRaw[0] || [];
         const eventsToCreate = [];
         const today = new Date().toISOString().split('T')[0];
 
         let allSkippedForMissingFields = true;
         let duplicateEventFound = false;
         const eventKeys = new Set();
-        await new Promise((resolve, reject) => {
-            fs.createReadStream(SCHEDULE_CSV_PATH)
-                .pipe(csv())
-                .on('data', row => {
-                    if (!row || typeof row !== 'object') {
-                        logger.warn('Skipping malformed row in schedule.csv:', row);
-                        return;
-                    }
-                    if (!row.Date || !row.Time || !row.Title) {
-                        logger.warn(`Skipping invalid row in schedule.csv: ${JSON.stringify(row)}`);
-                        return;
-                    }
-                    allSkippedForMissingFields = false;
-                    if (row.Date < today) {
-                        logger.info(`Skipping past event: ${row.Title} on ${row.Date}`);
-                        return;
-                    }
-                    const timeRegex = /^\d{2}:\d{2}$/;
-                    if (!timeRegex.test(row.Time)) {
-                        logger.error(`Invalid time format for event "${row.Title}": ${row.Time}`);
-                        return;
-                    }
-                    const formattedTitle = formatString(row.Title);
-                    const formattedSeriesName = row.SeriesTag && seriesMap.has(row.SeriesTag)
-                        ? formatString(seriesMap.get(row.SeriesTag))
-                        : '';
+        for (const line of scheduleRowsRaw.slice(1)) {
+            const row = {
+                Title: line[scheduleHeader.indexOf('Title')],
+                Date: line[scheduleHeader.indexOf('Date')],
+                Time: line[scheduleHeader.indexOf('Time')],
+                URL: line[scheduleHeader.indexOf('URL')],
+                SeriesTag: line[scheduleHeader.indexOf('SeriesTag')],
+            };
+            if (!row || typeof row !== 'object') {
+                logger.warn('Skipping malformed row in schedule sheet:', row);
+                continue;
+            }
+            if (!row.Date || !row.Time || !row.Title) {
+                logger.warn(`Skipping invalid row in schedule sheet (missing required fields): ${JSON.stringify(row)}`);
+                continue;
+            }
+            allSkippedForMissingFields = false;
+            if (row.Date < today) {
+                logger.info(`Skipping past event: ${row.Title} on ${row.Date}`);
+                continue;
+            }
+            const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+            if (!dateRegex.test(row.Date)) {
+                logger.error(`Invalid date format for event "${row.Title}": ${row.Date}. Expected YYYY-MM-DD.`);
+                continue;
+            }
+            const timeRegex = /^\d{2}:\d{2}$/;
+            if (!timeRegex.test(row.Time)) {
+                logger.error(`Invalid time format for event "${row.Title}": ${row.Time}. Expected HH:MM (24-hour).`);
+                continue;
+            }
+            const formattedTitle = formatString(row.Title);
+            const formattedSeriesName = row.SeriesTag && seriesMap.has(row.SeriesTag)
+                ? formatString(seriesMap.get(row.SeriesTag))
+                : '';
 
-                    const descriptionParts = [];
-                    const runtimeValue = runtimesMap.get(row.Title) || runtimesMap.get(row.Title.trim());
-                    if (runtimeValue) descriptionParts.push(`Runtime: ${runtimeValue}`);
-                    if (formattedSeriesName) descriptionParts.push(`Film Series: ${formattedSeriesName}`);
-                    if (row.URL) descriptionParts.push(`URL: ${row.URL}`);
-                    const description = descriptionParts.join('\n');
+            const descriptionParts = [];
+            const runtimeValue = runtimesMap.get(row.Title) || runtimesMap.get(row.Title.trim());
+            if (runtimeValue) descriptionParts.push(`Runtime: ${runtimeValue}`);
+            if (formattedSeriesName) descriptionParts.push(`Film Series: ${formattedSeriesName}`);
+            if (row.URL) descriptionParts.push(`URL: ${row.URL}`);
+            const description = descriptionParts.join('\n');
 
-                    const startDateTime = new Date(`${row.Date}T${row.Time}`);
-                    let endDateTime;
-                    const runtimeMatch = runtimeValue && runtimeValue.match(/^(\d+)\s*minutes$/i);
-                    if (runtimeMatch) {
-                        const runtimeMinutes = parseInt(runtimeMatch[1], 10) + 15;
-                        endDateTime = new Date(startDateTime.getTime() + runtimeMinutes * 60000);
-                    } else {
-                        endDateTime = new Date(startDateTime.getTime() + 2 * 60 * 60000);
-                    }
+            const startDateTime = new Date(`${row.Date}T${row.Time}`);
+            let endDateTime;
+            const runtimeMatch = runtimeValue && runtimeValue.match(/^(\d+)\s*minutes$/i);
+            if (runtimeMatch) {
+                const runtimeMinutes = parseInt(runtimeMatch[1], 10) + 15;
+                endDateTime = new Date(startDateTime.getTime() + runtimeMinutes * 60000);
+            } else {
+                endDateTime = new Date(startDateTime.getTime() + 2 * 60 * 60000);
+            }
 
-                    const key = `${row.Title}|${row.Date}|${row.Time}`;
-                    if (eventKeys.has(key)) duplicateEventFound = true;
-                    eventKeys.add(key);
+            const key = `${row.Title}|${row.Date}|${row.Time}`;
+            if (eventKeys.has(key)) duplicateEventFound = true;
+            eventKeys.add(key);
 
-                    eventsToCreate.push({
-                        summary: formattedTitle,
-                        start: {
-                            dateTime: startDateTime.toISOString(),
-                            timeZone: TIME_ZONE,
-                        },
-                        end: {
-                            dateTime: endDateTime.toISOString(),
-                            timeZone: TIME_ZONE,
-                        },
-                        location: "The Beacon Cinema, 4405 Rainier Ave S, Seattle, WA 98118, USA",
-                        description,
-                    });
-                })
-                .on('end', resolve)
-                .on('error', reject);
-        });
+            eventsToCreate.push({
+                summary: formattedTitle,
+                start: {
+                    dateTime: startDateTime.toISOString(),
+                    timeZone: TIME_ZONE,
+                },
+                end: {
+                    dateTime: endDateTime.toISOString(),
+                    timeZone: TIME_ZONE,
+                },
+                location: "The Beacon Cinema, 4405 Rainier Ave S, Seattle, WA 98118, USA",
+                description,
+            });
+        }
 
         if (duplicateEventFound) {
             logger.warn('Duplicate events (by Title/Date/Time) found in schedule.csv.');

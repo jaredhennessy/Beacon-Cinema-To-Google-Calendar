@@ -1,12 +1,12 @@
 /**
  * utils.js - Shared Utilities Library
  * 
- * Provides common utilities for CSV operations, file management, network handling,
+ * Provides common utilities for Google Sheets operations, file management, network handling,
  * and data validation used across all scripts in the Beacon Cinema Calendar Sync project.
  * 
  * Key Features:
- * - CSV header validation and deduplication
- * - Robust file existence checking with detailed error messages
+ * - Deduplication of rows
+ * - Robust file existence checking for script files
  * - Network timeout handling with retry logic for Puppeteer navigation
  * - Comprehensive parameter validation for all functions
  * - Series data filtering and runtime information merging
@@ -20,7 +20,6 @@
 
 // @ts-check
 // External dependencies
-const fs = require('fs');
 const path = require('path');
 
 // Internal dependencies
@@ -34,34 +33,7 @@ const logger = require('./logger')('utils');
  * @param {string} filePath - Path to the CSV file.
  * @param {string} expectedHeader - The exact header row (comma-separated) that should be present at the top of the file.
  */
-function ensureHeader(filePath, expectedHeader) {
-    // Parameter validation
-    if (!filePath || typeof filePath !== 'string') {
-        throw new Error('ensureHeader: filePath must be a non-empty string');
-    }
-    if (!expectedHeader || typeof expectedHeader !== 'string') {
-        throw new Error('ensureHeader: expectedHeader must be a non-empty string');
-    }
-
-    // Create file with header if it doesn't exist
-    checkFile(filePath, {
-        createIfMissing: true,
-        initialContent: expectedHeader + '\n'
-    });
-
-    const content = fs.readFileSync(filePath, 'utf8').trim();
-    if (!content) {
-        fs.writeFileSync(filePath, expectedHeader + '\n');
-        logger.warn(`${filePath} was empty. Header inserted.`);
-        return;
-    }
-
-    const firstLine = content.split('\n')[0];
-    if (firstLine.replace(/\s/g, '').toLowerCase() !== expectedHeader.replace(/\s/g, '').toLowerCase()) {
-        fs.writeFileSync(filePath, expectedHeader + '\n' + content);
-        logger.warn(`${filePath} was missing a proper header row. Header inserted.`);
-    }
-}
+// Removed ensureHeader utility (obsolete with Google Sheets)
 
 /**
  * Deduplicates an array of objects by a key function.
@@ -96,44 +68,14 @@ function deduplicateRows(rows, keyFn) {
  * @param {string} filePath - Path to the CSV file to check for duplicates
  * @returns {void}
  */
-function warnIfDuplicateRows(filePath) {
-    // Parameter validation
-    if (!filePath || typeof filePath !== 'string') {
-        throw new Error('warnIfDuplicateRows: filePath must be a non-empty string');
-    }
-
-    if (!fs.existsSync(filePath)) return;
-    
-    const lines = fs.readFileSync(filePath, 'utf8').trim().split('\n').slice(1);
-    const seen = new Set();
-    let duplicateFound = false;
-    
-    for (const line of lines) {
-        if (seen.has(line)) duplicateFound = true;
-        seen.add(line);
-    }
-    
-    if (duplicateFound) {
-        logger.warn(`Duplicate rows found in ${filePath}.`);
-    }
-}
+// Removed warnIfDuplicateRows utility (obsolete with Google Sheets)
 
 /**
  * Reads the header row from a CSV file.
  * @param {string} filePath - Path to the CSV file.
  * @returns {string|null} The header row, or null if file does not exist or is empty
  */
-function readCsvHeader(filePath) {
-    // Parameter validation
-    if (!filePath || typeof filePath !== 'string') {
-        throw new Error('readCsvHeader: filePath must be a non-empty string');
-    }
-    
-    if (!fs.existsSync(filePath)) return null;
-    const content = fs.readFileSync(filePath, 'utf8').trim();
-    if (!content) return null;
-    return content.split('\n')[0];
-}
+// Removed readCsvHeader utility (obsolete with Google Sheets)
 
 /**
  * Filter series records by series tag
@@ -221,33 +163,21 @@ function checkFile(filePath, options = {}) {
     const {
         required = false,
         missingMessage = null,
-        createIfMissing = false,
-        initialContent = '',
         parentScript = ''
     } = options;
 
-    if (!fs.existsSync(filePath)) {
-        if (createIfMissing) {
-            // Ensure directory exists
-            const dir = path.dirname(filePath);
-            if (!fs.existsSync(dir)) {
-                fs.mkdirSync(dir, { recursive: true });
-            }
-            fs.writeFileSync(filePath, initialContent);
-            logger.info(`Created ${filePath}${initialContent ? ' with initial content' : ''}.`);
-            return true;
-        }
-        
+    // Only check for existence of script files (not data files)
+    try {
+        require.resolve(filePath);
+        return true;
+    } catch (err) {
         if (required) {
             const context = parentScript ? ` in ${parentScript}` : '';
             const message = missingMessage || `Required file not found: ${filePath}${context}`;
             throw new Error(message);
         }
-        
         return false;
     }
-    
-    return true;
 }
 
 /**
@@ -293,10 +223,7 @@ async function navigateWithRetry(page, url, options = {}) {
 }
 
 module.exports = {
-    ensureHeader,
     deduplicateRows,
-    warnIfDuplicateRows,
-    readCsvHeader,
     filterSeriesByTag,
     mergeRuntimeInfo,
     validateSeriesIndexRow,

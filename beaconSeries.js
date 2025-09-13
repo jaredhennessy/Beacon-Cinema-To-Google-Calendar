@@ -6,13 +6,10 @@
 // @ts-check
 // External dependencies
 const puppeteer = require('puppeteer');
-const fs = require('fs');
-const path = require('path');
-const createCsvWriter = require('csv-writer').createObjectCsvWriter;
-const csvParser = require('csv-parser');
+const { getSheetRows, setSheetRows } = require('./sheetsUtils');
 
 // Internal dependencies
-const { ensureHeader, deduplicateRows, navigateWithRetry } = require('./utils');
+const { deduplicateRows, navigateWithRetry } = require('./utils');
 const logger = require('./logger')('beaconSeries');
 const { setupErrorHandling, handleError } = require('./errorHandler');
 
@@ -25,11 +22,11 @@ setupErrorHandling(logger, 'beaconSeries.js');
  * Scrapes film titles from a series page
  * @param {string} seriesUrl - URL of the series page to scrape
  * @param {string} seriesTag - Tag identifying the series
- * @param {string} seriesCsvPath - Path to the series CSV file
+ * @deprecated seriesCsvPath - Path to the series CSV file (no longer used)
  * @param {Set<string>} allTitles - Set of all known titles to avoid duplicates
  * @returns {Promise<SeriesRow[]>} Array of series records
  */
-async function executeScript(seriesUrl, seriesTag, seriesCsvPath, allTitles) {
+async function executeScript(seriesUrl, seriesTag, allTitles) {
     // Parameter validation
     if (!seriesUrl || typeof seriesUrl !== 'string') {
         throw new Error('executeScript: seriesUrl must be a non-empty string');
@@ -37,9 +34,7 @@ async function executeScript(seriesUrl, seriesTag, seriesCsvPath, allTitles) {
     if (!seriesTag || typeof seriesTag !== 'string') {
         throw new Error('executeScript: seriesTag must be a non-empty string');
     }
-    if (!seriesCsvPath || typeof seriesCsvPath !== 'string') {
-        throw new Error('executeScript: seriesCsvPath must be a non-empty string');
-    }
+    // seriesCsvPath is obsolete and ignored
     if (!allTitles || !(allTitles instanceof Set)) {
         throw new Error('executeScript: allTitles must be a Set');
     }
@@ -78,15 +73,20 @@ async function executeScript(seriesUrl, seriesTag, seriesCsvPath, allTitles) {
 }
 
 /**
- * Process series rows and write to series.csv
- * @param {SeriesIndexRow[]} rows - Array of series index rows
- * @param {SeriesRow[]} existingRows - Existing series records
- * @param {string} seriesCsvPath - Path to series CSV file
- * @param {Set<string>} allTitles - Set of all known titles
- * @param {string} seriesIndexCsvPath - Path to series index CSV file
+ * Process series rows and write to Google Sheet
+ * @param {Array<{seriesName: string, seriesURL: string, seriesTag: string}>} rows
+ * @param {Array<{Title: string, SeriesTag: string, DateRecorded: string}>} existingRows
+ * @param {Set<string>} allTitles
  * @returns {Promise<{ processedCount: number; skippedCount: number }>}
  */
-async function processSeriesRows(rows, existingRows, seriesCsvPath, allTitles, seriesIndexCsvPath) {
+/**
+ * Process series rows and write to Google Sheet
+ * @param {Array<{seriesName: string, seriesURL: string, seriesTag: string}>} rows
+ * @param {Array<{Title: string, SeriesTag: string, DateRecorded: string}>} existingRows
+ * @param {Set<string>} allTitles
+ * @returns {Promise<{ processedCount: number; skippedCount: number }>}
+ */
+async function processSeriesRows(rows, existingRows, allTitles) {
     // Parameter validation
     if (!rows || !Array.isArray(rows)) {
         throw new Error('processSeriesRows: rows must be an array');
@@ -94,14 +94,8 @@ async function processSeriesRows(rows, existingRows, seriesCsvPath, allTitles, s
     if (!existingRows || !Array.isArray(existingRows)) {
         throw new Error('processSeriesRows: existingRows must be an array');
     }
-    if (!seriesCsvPath || typeof seriesCsvPath !== 'string') {
-        throw new Error('processSeriesRows: seriesCsvPath must be a non-empty string');
-    }
     if (!allTitles || !(allTitles instanceof Set)) {
         throw new Error('processSeriesRows: allTitles must be a Set');
-    }
-    if (!seriesIndexCsvPath || typeof seriesIndexCsvPath !== 'string') {
-        throw new Error('processSeriesRows: seriesIndexCsvPath must be a non-empty string');
     }
     
     let processedCount = 0;
@@ -113,25 +107,24 @@ async function processSeriesRows(rows, existingRows, seriesCsvPath, allTitles, s
             const row = rows[i];
             logger.info(`Processing ${i + 1}/${totalRows}: ${row.seriesName}`);
             
-            const newRecords = await executeScript(row.seriesURL, row.seriesTag, seriesCsvPath, allTitles);
+            const newRecords = await executeScript(row.seriesURL, row.seriesTag, allTitles);
             processedCount += newRecords.length;
             skippedCount += newRecords.filter(r => allTitles.has(r.Title)).length;
             
             // Add new titles to set to prevent duplicates
             newRecords.forEach(record => allTitles.add(record.Title));
             
-            // Update CSV file
-            const csvWriter = createCsvWriter({
-                path: seriesCsvPath,
-                header: [
-                    { id: 'Title', title: 'Title' },
-                    { id: 'SeriesTag', title: 'SeriesTag' },
-                    { id: 'DateRecorded', title: 'DateRecorded' }
-                ],
-                append: true
-            });
-            
-            await csvWriter.writeRecords(newRecords);
+            // Update Google Sheet
+            if (newRecords.length > 0) {
+                let sheetRows = await getSheetRows('series');
+                if (!sheetRows.length || sheetRows[0][0] !== 'Title') {
+                    sheetRows = [['Title', 'SeriesTag', 'DateRecorded']];
+                }
+                for (const rec of newRecords) {
+                    sheetRows.push([rec.Title, rec.SeriesTag, rec.DateRecorded]);
+                }
+                await setSheetRows('series', sheetRows);
+            }
             
             logger.info(`Progress: ${i + 1}/${totalRows} complete. Found ${newRecords.length} titles.`);
         }
@@ -156,41 +149,35 @@ async function processSeriesRows(rows, existingRows, seriesCsvPath, allTitles, s
     }, 20 * 60 * 1000);
     
     try {
-        const seriesIndexCsvPath = path.join(__dirname, 'files', 'seriesIndex.csv');
-        const seriesCsvPath = path.join(__dirname, 'files', 'series.csv');
-        
-        ensureHeader(seriesIndexCsvPath, 'seriesName,seriesURL,seriesTag');
-        ensureHeader(seriesCsvPath, 'Title,SeriesTag,DateRecorded');
-        
-        /** @type {Array<{seriesName: string, seriesURL: string, seriesTag: string}>} */
-        const rows = [];
-        /** @type {Array<{Title: string, SeriesTag: string, DateRecorded: string}>} */
-        const existingRows = [];
-        const allTitles = new Set();
-        
-        /** @type {Promise<void>} */ 
-        const loadPromise = new Promise((resolve, reject) => {
-            fs.createReadStream(seriesIndexCsvPath)
-                .pipe(csvParser())
-                .on('data', (row) => {
-                    if (row.seriesURL && row.seriesTag) rows.push(row);
-                })
-                .on('end', () => {
-                    logger.info(`Found ${rows.length} series in ${seriesIndexCsvPath}.`);
-                    resolve(undefined);
-                })
-                .on('error', reject);
-        });
-        
-        await loadPromise;
-        
-        const result = await processSeriesRows(rows, existingRows, seriesCsvPath, allTitles, seriesIndexCsvPath);
+        // Read seriesIndex from Google Sheet
+        const rowsRaw = await getSheetRows('seriesIndex');
+        // Convert rows to objects
+        const header = rowsRaw[0];
+        const rows = rowsRaw.slice(1).map(r => ({
+            seriesName: r[header.indexOf('seriesName')],
+            seriesURL: r[header.indexOf('seriesURL')],
+            seriesTag: r[header.indexOf('seriesTag')],
+        })).filter(r => r.seriesURL && r.seriesTag);
+
+        logger.info(`Found ${rows.length} series in Google Sheet 'seriesIndex'.`);
+
+        // Read existing series from Google Sheet
+        const existingRowsRaw = await getSheetRows('series');
+        const existingHeader = existingRowsRaw[0] || [];
+        const existingRows = existingRowsRaw.length > 1 ? existingRowsRaw.slice(1).map(r => ({
+            Title: r[existingHeader.indexOf('Title')],
+            SeriesTag: r[existingHeader.indexOf('SeriesTag')],
+            DateRecorded: r[existingHeader.indexOf('DateRecorded')],
+        })) : [];
+        const allTitles = new Set(existingRows.map(r => r.Title));
+
+        const result = await processSeriesRows(rows, existingRows, allTitles);
         processedCount = result.processedCount;
         skippedCount = result.skippedCount;
-        
+
         logger.info(`Processed: ${processedCount}, Skipped: ${skippedCount}`);
         logger.summary(processedCount, skippedCount, 0);
-        
+
         // Clear the global timeout since script completed successfully
         clearTimeout(globalTimeout);
     } catch (error) {

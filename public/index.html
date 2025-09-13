@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Beacon Cinema Calendar Sync - Web Interface</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2em; }
+    button { margin: 0.5em; padding: 0.5em 1em; }
+    #log { background: #222; color: #eee; padding: 1em; height: 400px; overflow-y: auto; white-space: pre-wrap; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <h1>Beacon Cinema Calendar Sync</h1>
+  <p>Run any script and view logs in real time:</p>
+  <div>
+    <button onclick="runScript('fullUpdate.js')">Run Full Update</button><br>
+    Step 1: <button onclick="runScript('beaconSeries.js')">Run beaconSeries.js</button><br>
+    Step 2: <button onclick="runScript('beaconSchedule.js')">Run beaconSchedule.js</button><br>
+    Step 3: <button onclick="runScript('findRuntimes.js')">Run findRuntimes.js</button><br>
+    Step 4: <button onclick="runScript('updateGCal.js')">Run updateGCal.js</button>
+  </div>
+  <h2>Live Log Output</h2>
+  <div id="log">(Log output will appear here)</div>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -13,15 +13,11 @@
 
 // External dependencies
 const puppeteer = require('puppeteer');
-const fs = require('fs');
-const path = require('path');
-const { execSync } = require('child_process');
-const createCsvWriter = require('csv-writer').createObjectCsvWriter;
-const readline = require('readline');
+const { getSheetRows, setSheetRows } = require('./sheetsUtils');
 
 // Internal dependencies
 const logger = require('./logger')('beaconSchedule');
-const { ensureHeader, deduplicateRows, checkFile, navigateWithRetry } = require('./utils');
+const { deduplicateRows, navigateWithRetry } = require('./utils');
 const { setupErrorHandling, handleError } = require('./errorHandler');
 
 setupErrorHandling(logger, 'beaconSchedule.js');
@@ -30,39 +26,16 @@ setupErrorHandling(logger, 'beaconSchedule.js');
     logger.info('Starting beaconSchedule.js');
 
     const calendarUrl = 'https://thebeacon.film/calendar';
-    const seriesCsvPath = path.join(__dirname, 'files', 'series.csv');
-    const scheduleCsvPath = path.join(__dirname, 'files', 'schedule.csv');
-    const seriesIndexCsvPath = path.join(__dirname, 'files', 'seriesIndex.csv');
-
-    // Check and set up required CSV files
-    checkFile(seriesIndexCsvPath, {
-        required: true,
-        createIfMissing: true,
-        initialContent: 'seriesName,seriesURL,seriesTag\n',
-        missingMessage: 'seriesIndex.csv is required to map film titles to series. Please create it and try again.'
-    });
-
-    // series.csv is required and must exist (created by beaconSeries.js)
-    checkFile(seriesCsvPath, {
-        required: true,
-        missingMessage: 'series.csv is missing. Please run beaconSeries.js first.',
-        parentScript: 'beaconSchedule.js'
-    });
-
-    // schedule.csv will be created/updated by this script
-    ensureHeader(scheduleCsvPath, 'Title,Date,Time,URL,SeriesTag,DateRecorded');
-
-    const scheduleCsvWriter = createCsvWriter({
-        path: scheduleCsvPath,
-        header: [
-            { id: 'title', title: 'Title' },
-            { id: 'date', title: 'Date' },
-            { id: 'time', title: 'Time' },
-            { id: 'url', title: 'URL' },
-            { id: 'seriesTag', title: 'SeriesTag' },
-            { id: 'dateRecorded', title: 'DateRecorded' }
-        ]
-    });
+    // Read series from Google Sheet
+    const seriesRowsRaw = await getSheetRows('series');
+    const seriesHeader = seriesRowsRaw[0] || [];
+    const seriesRows = seriesRowsRaw.length > 1 ? seriesRowsRaw.slice(1).map(line => {
+        return [
+            line[seriesHeader.indexOf('Title')],
+            line[seriesHeader.indexOf('SeriesTag')],
+            line[seriesHeader.indexOf('DateRecorded')]
+        ];
+    }).filter(fields => fields[0] && fields[1]) : [];
 
     const normalizeTitle = title => title.replace(/^"|"$/g, '').trim().toLowerCase();
 
@@ -93,18 +66,8 @@ setupErrorHandling(logger, 'beaconSchedule.js');
         );
         titleMap.delete(normalizeTitle('RENT THE BEACON'));
 
-        const seriesRows = fs.readFileSync(seriesCsvPath, 'utf8')
-            .split('\n')
-            .slice(1)
-            .map(line => {
-                const fields = line.split(',').map(field => field.trim());
-                if (fields.length < 3) {
-                    logger.warn('Skipping malformed row in series.csv:', line);
-                    return [];
-                }
-                return fields;
-            })
-            .filter(fields => fields.length >= 3);
+    const seriesRows = await getSheetRows('series');
+    const seriesMapFromSheet = new Map(seriesRows.map(([title, seriesTag]) => [normalizeTitle(title), seriesTag]));
 
         const seenPairs = new Set();
         for (const [title, seriesTag] of seriesRows) {
@@ -148,40 +111,21 @@ setupErrorHandling(logger, 'beaconSchedule.js');
         }
 
         const today = new Date().toISOString().split('T')[0];
-        const existingSchedule = fs.existsSync(scheduleCsvPath)
-            ? fs.readFileSync(scheduleCsvPath, 'utf8')
-                  .split('\n')
-                  .slice(1)
-                  .map(line => line.split(',').map(field => field.trim()))
-                  .filter(fields => fields.length >= 2)
-            : [];
+        // Read existing schedule from Google Sheet
+    const scheduleRows = await getSheetRows('schedule');
+    const scheduleHeader = scheduleRows[0] || [];
+    const validScheduleRows = scheduleRows.length > 1 ? scheduleRows.slice(1).filter(fields => fields[0] && fields[1]) : [];
 
-        // Remove future screenings from schedule.csv before writing new data
-        const filteredSchedule = existingSchedule.filter(([title, date]) => date < today);
+        // Remove future screenings from schedule before writing new data
+        const filteredSchedule = validScheduleRows.filter(([title, date]) => date < today);
 
-        const tempScheduleCsvWriter = createCsvWriter({
-            path: scheduleCsvPath,
-            header: [
-                { id: 'title', title: 'Title' },
-                { id: 'date', title: 'Date' },
-                { id: 'time', title: 'Time' },
-                { id: 'url', title: 'URL' },
-                { id: 'seriesTag', title: 'SeriesTag' },
-                { id: 'dateRecorded', title: 'DateRecorded' }
-            ]
-        });
-
-        await tempScheduleCsvWriter.writeRecords(
-            filteredSchedule.map(([title, date, time, url, seriesTag, dateRecorded]) => ({
-                title,
-                date,
-                time,
-                url,
-                seriesTag,
-                dateRecorded
-            }))
-        );
-        logger.info('Removed future screenings from schedule.csv.');
+        // Write filtered schedule back to Google Sheet
+        let filteredRows = [scheduleHeader];
+        for (const row of filteredSchedule) {
+            filteredRows.push(row);
+        }
+        await setSheetRows('schedule', filteredRows);
+        logger.info('Removed future screenings from schedule (Google Sheet).');
 
         const currentTimestamp = new Date().toISOString();
         const scheduleWithSeriesTag = schedule
@@ -208,18 +152,23 @@ setupErrorHandling(logger, 'beaconSchedule.js');
         }
 
         if (uniqueEvents.length === 0) {
-            logger.warn('No unique events to write. schedule.csv not updated.');
-            logger.info('No new events were added to schedule.csv.');
+            logger.warn('No unique events to write. schedule (Google Sheet) not updated.');
+            logger.info('No new events were added to schedule (Google Sheet).');
         } else {
-            await scheduleCsvWriter.writeRecords(
-                uniqueEvents.map(event => ({
-                    ...event,
-                    title: titleMap.get(normalizeTitle(event.title)) || event.title
-                }))
-            );
-            logger.info(`schedule.csv written successfully. ${uniqueEvents.length} events added.`);
-            // Ensure header after writing
-            ensureHeader(scheduleCsvPath, 'Title,Date,Time,URL,SeriesTag,DateRecorded');
+            // Write unique events to Google Sheet
+            const sheetRows = [
+                ['Title', 'Date', 'Time', 'URL', 'SeriesTag', 'DateRecorded'],
+                ...uniqueEvents.map(event => [
+                    titleMap.get(normalizeTitle(event.title)) || event.title,
+                    event.date,
+                    event.time,
+                    event.url,
+                    event.seriesTag,
+                    event.dateRecorded
+                ])
+            ];
+            await setSheetRows('schedule', sheetRows);
+            logger.info(`schedule (Google Sheet) written successfully. ${uniqueEvents.length} events added.`);
         }
         eventsAdded = uniqueEvents.length;
         logger.info(`Total events processed: ${eventsAdded}`);
