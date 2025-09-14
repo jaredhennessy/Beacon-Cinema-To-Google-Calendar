@@ -22,7 +22,7 @@ const logger = require('./logger')('beaconSchedule');
 const { deduplicateRows, navigateWithRetry } = require('./utils');
 const { setupErrorHandling, handleError } = require('./errorHandler');
 
-const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/opt/render/.cache/puppeteer/chrome/linux-135.0.7049.84/chrome-linux64/chrome';
+// const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/opt/render/.cache/puppeteer/chrome/linux-135.0.7049.84/chrome-linux64/chrome';
 
 setupErrorHandling(logger, 'beaconSchedule.js');
 
@@ -46,7 +46,11 @@ setupErrorHandling(logger, 'beaconSchedule.js');
     let browser;
     let eventsAdded = 0;
     try {
-        browser = await puppeteer.launch({ headless: true, executablePath: CHROME_PATH });
+        // Render.com: Let Puppeteer manage its own browser installation. See https://community.render.com/t/error-could-not-found-chromium/9848
+        browser = await puppeteer.launch({
+            headless: true,
+            args: ['--no-sandbox', '--disable-setuid-sandbox']
+        });
         const page = await browser.newPage();
 
         const navigationSuccess = await navigateWithRetry(page, calendarUrl, { logger });
