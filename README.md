@@ -1,163 +1,96 @@
 # Beacon Cinema Calendar Sync
 
-This project automates scraping [The Beacon Cinema](https://thebeacon.film/calendar) schedule and syncing it to Google Calendar, including runtime information and film series details, using Google Sheets for data management.
+Automates scraping [The Beacon Cinema](https://thebeacon.film/calendar) schedule and syncing it to Google Calendar, including runtime and film series details, using Google Sheets for data management.
+
+## Summary
+
+This project scrapes film series and schedule data from The Beacon Cinema, stores it in Google Sheets (`series`, `schedule`, `runtimes`), and syncs events to Google Calendar. It supports both CLI and web interface usage, and is optimized for deployment on Render.com.
 
 ## Features
 
-- **Film Series Management**: Scrapes film series information and member films from series pages
-- **Schedule Extraction**: Extracts current film schedules with dates, times, and links
-- **Runtime Discovery**: Automatically finds and records film runtime information
-- **Google Calendar Integration**: Syncs with Google Calendar, including:
-  - Film titles with proper capitalization
-  - Runtime information (adds 15 minutes buffer, defaults to 2 hours if unknown)
-  - Film series associations
-  - Venue location (The Beacon Cinema)
-  - Direct links to film detail pages
-- **Google Sheets Integration**: Stores and manages data in Google Sheets for series, schedules, and runtimes
-- **Automated Execution**: Runs complete pipeline without user prompts (ideal for web deployments)
-- **Render.com Ready**: Optimized Puppeteer configuration for cloud deployment
-- **Minimal Logging**: Clean production output with optional verbose debugging mode
-- **Comprehensive Error Handling**: Robust error handling with detailed logging
-- **Data Deduplication**: Automatic deduplication of events and data with warnings
-- **Parameter Validation**: Comprehensive input validation across all functions
-- **Shared Utilities**: Centralized timeout handling and Google Sheets operations
+- Film series management
+- Schedule extraction
+- Runtime discovery
+- Google Calendar integration
+- Google Sheets integration (`series`, `schedule`, `runtimes`)
+- Automated execution (CLI and web interface)
+- Render.com ready (optimized Puppeteer config)
+- Minimal logging and comprehensive error handling
+- Data deduplication and parameter validation
 
-## Prerequisites
+## Quick Start
 
-- Node.js 14 or higher (recommended)
-- A Google Cloud project with:
-  - Calendar API and Sheets API enabled
-  - A service account with a JSON key (downloaded as `beacon-calendar-update.json`)
-- The service account email must be added as an editor to your target Google Calendar (in the Google Calendar UI).
-- You must create and share a Google Sheet for storing all data (see below).
+```bash
+npm install
+# Copy and edit your .env file with credentials
+npm start              # Launch web interface
+# Or run the full pipeline:
+node fullUpdate.js
+```
 
-> **Tip:** All scripts must be run from the project root (`jcal`) using Node.js (not in a browser).
+## Environment Variables
 
-## Dependencies
+Add these to your `.env` file:
 
-- Install all dependencies via `npm install`:
-  - `puppeteer` (for web scraping with centralized Chrome configuration)
-  - `googleapis` (for Google Calendar and Sheets API)
-  - `dotenv` (for environment variables)
+```bash
+GOOGLE_TYPE=service_account
+GOOGLE_PROJECT_ID=your-project-id
+GOOGLE_PRIVATE_KEY_ID=your-key-id
+GOOGLE_PRIVATE_KEY="your-private-key"
+GOOGLE_CLIENT_EMAIL=your-service-account-email
+GOOGLE_CLIENT_ID=your-client-id
+GOOGLE_AUTH_URI=https://accounts.google.com/o/oauth2/auth
+GOOGLE_TOKEN_URI=https://oauth2.googleapis.com/token
+GOOGLE_AUTH_PROVIDER_X509_CERT_URL=https://www.googleapis.com/oauth2/v1/certs
+GOOGLE_CLIENT_X509_CERT_URL=your-cert-url
+SPREADSHEET_ID=your-google-sheet-id
+CALENDAR_ID=your-calendar-id
+TIME_ZONE=America/Los_Angeles
+```
 
-### Puppeteer Configuration
+## Google Sheets Setup
 
-This project includes optimized Puppeteer configuration for both local development and cloud deployment:
+## Script Overview
 
-- **Centralized Configuration**: All scripts use `puppeteerConfig.js` for consistent Chrome settings
-- **Render.com Ready**: Automated Chrome installation and optimized launch arguments
-- **Minimal Logging**: Clean production output with `🚀 Launching Puppeteer...` instead of verbose configuration dumps
-- **Debug Mode**: Set `PUPPETEER_VERBOSE=true` environment variable for detailed logging when needed
-- **Cross-Platform**: Works on Windows (development) and Linux (Render.com deployment)
+| Script              | Purpose                                      |
+|---------------------|----------------------------------------------|
+| beaconSeries.js     | Scrape series info, update `series` tab      |
+| beaconSchedule.js   | Scrape schedule, update `schedule` tab       |
+| findRuntimes.js     | Find runtimes, update `runtimes` tab         |
+| updateGCal.js       | Sync schedule to Google Calendar             |
+| fullUpdate.js       | Run all steps above in sequence              |
+| clearLogs.js        | Empty all log files                          |
+| testPuppeteer.js    | Verify Puppeteer/Chrome setup                |
 
-For deployment details, see `PUPPETEER_RENDER_SETUP.md`.
+## Usage
 
-## Required Files and Google Sheets Setup
+### CLI
 
-### Google Sheets Tab Summary
+```bash
+node fullUpdate.js
+# Or run scripts individually:
+node beaconSeries.js
+node beaconSchedule.js
+node findRuntimes.js
+node updateGCal.js
+```
 
-| Tab Name      | Purpose                                                      |
-|--------------|--------------------------------------------------------------|
-| seriesIndex  | Film series definitions (name, URL, tag)                     |
-| series       | Auto-populated: member films for each series                 |
-| schedule     | Auto-populated: current film schedule (title, date, time)    |
-| runtimes     | Auto-populated: runtime info for each film                   |
+### Web Interface
 
-- The following files and directories are required:
-  - `logs/`: Directory for log files (created automatically if missing).
-  - `beacon-calendar-update.json`: Google service account credentials.
-  - `.env`: Environment configuration.
+```bash
+npm start
+# Open http://localhost:3000 in your browser
+```
 
-### Setting Up Google Sheets
+## Deployment (Render.com)
 
-1. **Create a new Google Sheet** in your Google Drive.
-2. **Add the following tabs (bottom of the sheet):**
+- See `render.yaml` and `PUPPETEER_RENDER_SETUP.md`
+- Set environment variables in Render.com dashboard
 
-- `seriesIndex` (for your film series definitions)
-- `series` (auto-populated by scripts)
-- `schedule` (auto-populated by scripts)
-- `runtimes` (auto-populated by scripts)
+## Logging & Maintenance
 
-3. **Share the sheet** with your service account email (found in `beacon-calendar-update.json`) as an editor.
-   - **How to find your service account email:**
-     - In the [Google Cloud Console](https://console.cloud.google.com/), go to **IAM & Admin > Service Accounts**.
-     - Locate your service account and copy the **Email** field (usually ends with `@<project>.iam.gserviceaccount.com`).
-
-4. **Get the Sheet ID** from the URL (the part after `/d/` and before `/edit`).
-
-5. **Set the Sheet ID in your `.env` file:**
-
-   ```env
-   SPREADSHEET_ID=your_google_sheet_id
-   ```
-
-6. **Populate the `seriesIndex` tab** with your film series definitions:
-
-   - Columns: `seriesName`, `seriesURL`, `seriesTag`
-   - Example:
-
-     | seriesName | seriesURL | seriesTag |
-     |------------|-----------|-----------|
-     | THE ABSURD MYSTERY... | <https://thebeacon.film/programs/entry/the-absurd-mystery>... | lynchian |
-     | TO LIVE IS TO DREAM... | <https://thebeacon.film/programs/entry/to-live-is-to-dream>... | davidlynch |
-
-   - You can add or remove series as needed.
-
-7. **Leave the other tabs empty**; scripts will populate them automatically.
-
-## Web Interface
-
-You can run scripts and view logs in real time using the built-in web interface:
-
-1. Start the server:
-
-   ```bash
-   npm start
-   ```
-
-   This will launch the Express server (see `webserver.js`) at [http://localhost:3000](http://localhost:3000).
-
-2. Open your browser and go to [http://localhost:3000](http://localhost:3000).
-
-3. Use the buttons to run any script:
-   - **🧪 Test Puppeteer** - Debug Puppeteer Chrome installation
-   - **Run Full Update** - Complete automated pipeline (no prompts)
-   - **Individual Scripts** - Run beaconSeries.js, beaconSchedule.js, etc.
-
-4. The log output will appear live in the "Live Log Output" section.
-
-**Note:** The web interface is ideal for running scripts without terminal access. The Full Update button runs the complete pipeline automatically without any user prompts, making it perfect for production deployments.
-
-## Deployment
-
-### Render.com Deployment
-
-This project is optimized for deployment on Render.com with the following features:
-
-- **Automated Chrome Installation**: `render.yaml` configures Chrome installation during build
-- **Optimized Launch Arguments**: Puppeteer configured for container environments
-- **Minimal Logging**: Clean production logs without verbose configuration dumps
-- **No User Prompts**: Full pipeline runs automatically without interaction
-
-Key deployment files:
-
-- `render.yaml` - Render.com service configuration
-- `puppeteerConfig.js` - Centralized Puppeteer configuration
-- `PUPPETEER_RENDER_SETUP.md` - Detailed deployment documentation
-
-### Environment Variables
-
-Required environment variables for deployment:
-
-- `PUPPETEER_CACHE_DIR=/opt/render/.cache/puppeteer`
-- `PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false`
-- `PUPPETEER_VERBOSE=true` (optional, for debugging)
-- All Google service account credentials
-- `CALENDAR_ID` and `SPREADSHEET_ID`
-
-## Logging
-
-All scripts use a centralized logging system (`logger.js`) that writes to both console and log files with timestamp formatting and error handling.
+- Logs in `logs/` directory
+- Log management via CLI and web interface
 
 ### Log Management Features
 
@@ -192,7 +125,7 @@ npm run log-maintain
 - `LOG_RETENTION_DAYS=30` - Days to keep old log files
 - `COMPRESS_LOGS=true` - Enable compression of rotated logs (Linux only)
 
-### Usage
+### Logger Script Usage
 
 ```javascript
 const logger = require('./logger')('scriptName');
@@ -408,25 +341,8 @@ If you encounter authentication errors, verify the following:
 ### Runtime Issues
 
 - **Node.js Version**: Scripts require Node.js 14+ and may not work with older versions
-- **Puppeteer/Chromium Issues**: If Puppeteer fails to launch, install missing system dependencies
+- **Puppeteer/Chromium Issues**: If Puppeteer fails to launch, install missing system dependencies (see `PUPPETEER_RENDER_SETUP.md`)
 - **Network Timeouts**: The `navigateWithRetry()` utility handles most timeout issues automatically
-
-## Recent Updates
-
-### Version 2.0 - Production Deployment Ready
-
-- **🚀 Render.com Optimization**: Complete Puppeteer configuration for cloud deployment
-- **🔇 Minimal Logging**: Reduced verbose output for cleaner production logs
-- **⚡ Automated Execution**: Removed user prompts from `fullUpdate.js` for seamless automation
-- **🔧 Centralized Configuration**: All Puppeteer scripts use `puppeteerConfig.js` for consistency
-- **🐛 Debug Mode**: Optional verbose logging via `PUPPETEER_VERBOSE=true` environment variable
-- **📚 Enhanced Documentation**: Added `PUPPETEER_RENDER_SETUP.md` with deployment guidelines
-
-### Key Improvements
-
-- **Before**: Verbose configuration dumps, user prompts with timeouts, manual Chrome setup
-- **After**: Clean `🚀 Launching Puppeteer...` output, fully automated pipeline, intelligent Chrome installation
-- **Deployment**: Ready for production deployment on Render.com with optimized container configuration
 
 ## License
 

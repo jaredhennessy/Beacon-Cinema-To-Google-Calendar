@@ -26,11 +26,10 @@ setupErrorHandling(logger, 'beaconSeries.js');
  * Scrapes film titles from a series page
  * @param {string} seriesUrl - URL of the series page to scrape
  * @param {string} seriesTag - Tag identifying the series
- * @deprecated seriesCsvPath - Path to the series CSV file (no longer used)
- * @param {Set<string>} allTitles - Set of all known titles to avoid duplicates
+ * @param {Array<{Title: string, SeriesTag: string, DateRecorded: string}>} existingRows - Existing series data to check for duplicates
  * @returns {Promise<SeriesRow[]>} Array of series records
  */
-async function executeScript(seriesUrl, seriesTag, allTitles) {
+async function executeScript(seriesUrl, seriesTag, existingRows) {
     // Parameter validation
     if (!seriesUrl || typeof seriesUrl !== 'string') {
         throw new Error('executeScript: seriesUrl must be a non-empty string');
@@ -38,9 +37,8 @@ async function executeScript(seriesUrl, seriesTag, allTitles) {
     if (!seriesTag || typeof seriesTag !== 'string') {
         throw new Error('executeScript: seriesTag must be a non-empty string');
     }
-    // seriesCsvPath is obsolete and ignored
-    if (!allTitles || !(allTitles instanceof Set)) {
-        throw new Error('executeScript: allTitles must be a Set');
+    if (!existingRows || !Array.isArray(existingRows)) {
+        throw new Error('executeScript: existingRows must be an array');
     }
     
     let browser;
@@ -64,8 +62,20 @@ async function executeScript(seriesUrl, seriesTag, allTitles) {
 
         await browser.close();
 
-        const validTitles = titles.filter(title => title && !allTitles.has(title));
-        logger.info(`Extracted ${validTitles.length} valid titles.`);
+        // Filter out titles that already exist for this specific series
+        const existingTitlesForSeries = new Set(
+            existingRows
+                .filter(row => row.SeriesTag === seriesTag)
+                .map(row => row.Title)
+        );
+        
+        const validTitles = titles.filter(title => 
+            title && 
+            title.trim().length > 0 && 
+            !existingTitlesForSeries.has(title)
+        );
+        
+        logger.info(`Extracted ${titles.length} total titles, ${validTitles.length} new titles for series '${seriesTag}'.`);
 
         return validTitles.map(title => ({
             Title: title,
@@ -113,7 +123,7 @@ async function processSeriesRows(rows, existingRows, allTitles) {
             const row = rows[i];
             logger.info(`Processing ${i + 1}/${totalRows}: ${row.seriesName}`);
             
-            const newRecords = await executeScript(row.seriesURL, row.seriesTag, allTitles);
+            const newRecords = await executeScript(row.seriesURL, row.seriesTag, existingRows);
             processedCount += newRecords.length;
             skippedCount += newRecords.filter(r => allTitles.has(r.Title)).length;
             
