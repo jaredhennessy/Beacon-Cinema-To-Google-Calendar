@@ -9,6 +9,9 @@ services:
         sync: false
       - key: TIME_ZONE
         sync: false
+      - key: PUPPETEER_CACHE_DIR
+        value: /opt/render/.cache/puppeteer
+        sync: false
     autoDeploy: true
     plan: free
     rootDir: .
