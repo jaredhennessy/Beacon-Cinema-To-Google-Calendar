@@ -42,6 +42,7 @@ async function executeScript(seriesUrl, seriesTag, allTitles) {
         throw new Error('executeScript: allTitles must be a Set');
     }
     
+    let browser;
     try {
         // Render.com: Let Puppeteer manage its own browser installation. See https://community.render.com/t/error-could-not-found-chromium/9848
         browser = await puppeteer.launch({
