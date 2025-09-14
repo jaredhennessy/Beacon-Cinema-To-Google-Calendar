@@ -23,6 +23,9 @@ beacon-calendar-update.json
 dist/
 build/
 
+# Puppeteer cache (Chrome binaries)
+.cache/
+
 # OS-specific files
 .DS_Store
 Thumbs.db

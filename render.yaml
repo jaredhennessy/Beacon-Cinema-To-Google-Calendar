@@ -2,7 +2,7 @@ services:
   - type: web
     name: beacon-cinema-calendar-sync
     env: node
-    buildCommand: 'mkdir -p /opt/render/.cache/puppeteer && npm install && PUPPETEER_CACHE_DIR=/opt/render/.cache/puppeteer npx puppeteer browsers install chrome'
+    buildCommand: 'npm install && npx puppeteer browsers install chrome --path /opt/render/.cache/puppeteer'
     startCommand: 'npm start'
     envVars:
       - key: CALENDAR_ID

@@ -5,6 +5,72 @@
 
 const puppeteer = require('puppeteer');
 const fs = require('fs');
+const path = require('path');
+const { execSync } = require('child_process');
+
+/**
+ * Ensure Chrome is installed for Puppeteer
+ * @returns {Promise<void>}
+ */
+async function ensureChromeInstalled() {
+    const cacheDir = process.env.PUPPETEER_CACHE_DIR || 
+        (process.platform === 'win32' ? 
+            path.join(process.cwd(), '.cache', 'puppeteer') : 
+            '/opt/render/.cache/puppeteer');
+    
+    console.log(`Checking Chrome installation in: ${cacheDir}`);
+    
+    // Check if Chrome is already installed
+    if (fs.existsSync(cacheDir)) {
+        try {
+            const contents = fs.readdirSync(cacheDir, { recursive: true });
+            const chromeExists = contents.some(file => 
+                typeof file === 'string' && 
+                (file.includes('chrome') || file.includes('chromium'))
+            );
+            
+            if (chromeExists) {
+                console.log('Chrome installation found in cache directory');
+                return;
+            }
+        } catch (err) {
+            console.log('Error checking cache directory:', err.message);
+        }
+    }
+    
+    // Install Chrome if not found
+    console.log('Chrome not found, installing...');
+    try {
+        // Create cache directory (cross-platform)
+        if (!fs.existsSync(cacheDir)) {
+            fs.mkdirSync(cacheDir, { recursive: true });
+        }
+        
+        // Install Chrome with cross-platform command
+        const installCmd = process.platform === 'win32' 
+            ? `npx puppeteer browsers install chrome --path "${cacheDir}"`
+            : `PUPPETEER_CACHE_DIR=${cacheDir} npx puppeteer browsers install chrome`;
+            
+        console.log('Running:', installCmd);
+        
+        execSync(installCmd, { 
+            stdio: 'inherit',
+            timeout: 120000, // 2 minutes timeout
+            env: { ...process.env, PUPPETEER_CACHE_DIR: cacheDir }
+        });
+        
+        console.log('Chrome installation completed');
+    } catch (error) {
+        console.error('Failed to install Chrome:', error.message);
+        
+        // Don't throw on non-Linux platforms for testing
+        if (process.platform === 'linux') {
+            throw error;
+        } else {
+            console.log('Continuing without runtime installation (development environment)');
+        }
+    }
+}
 
 /**
  * Get the best Puppeteer launch configuration for the current environment
@@ -32,9 +98,10 @@ function getPuppeteerConfig() {
 
     // Try to find Chrome executable in common Render locations
     if (isRender) {
+        const cacheDir = process.env.PUPPETEER_CACHE_DIR || '/opt/render/.cache/puppeteer';
         const possiblePaths = [
-            '/opt/render/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome',
-            '/opt/render/.cache/puppeteer/chrome/linux-*/chrome-linux/chrome',
+            `${cacheDir}/chrome/linux-*/chrome-linux64/chrome`,
+            `${cacheDir}/chrome/linux-*/chrome-linux/chrome`,
             '/usr/bin/chromium-browser',
             '/usr/bin/google-chrome-stable',
             '/usr/bin/google-chrome'
@@ -43,18 +110,21 @@ function getPuppeteerConfig() {
         for (const path of possiblePaths) {
             if (path.includes('*')) {
                 // Handle glob patterns for versioned directories
-                const glob = require('glob');
                 try {
+                    const glob = require('glob');
                     const matches = glob.sync(path);
                     if (matches.length > 0 && fs.existsSync(matches[0])) {
                         config.executablePath = matches[0];
+                        console.log(`Found Chrome at: ${matches[0]}`);
                         break;
                     }
                 } catch (err) {
                     // glob might not be available, continue
+                    console.log('Glob not available, trying manual path search');
                 }
             } else if (fs.existsSync(path)) {
                 config.executablePath = path;
+                console.log(`Found Chrome at: ${path}`);
                 break;
             }
         }
@@ -68,6 +138,9 @@ function getPuppeteerConfig() {
  * @returns {Promise} Puppeteer browser instance
  */
 async function launchPuppeteer() {
+    // Ensure Chrome is installed first
+    await ensureChromeInstalled();
+    
     const config = getPuppeteerConfig();
     console.log('Launching Puppeteer with config:', JSON.stringify(config, null, 2));
     return await puppeteer.launch(config);
@@ -75,5 +148,6 @@ async function launchPuppeteer() {
 
 module.exports = {
     getPuppeteerConfig,
-    launchPuppeteer
+    launchPuppeteer,
+    ensureChromeInstalled
 };
