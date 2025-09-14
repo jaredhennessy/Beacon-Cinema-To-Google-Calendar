@@ -18,7 +18,13 @@
     Step 1: <button onclick="runScript('beaconSeries.js')">Run beaconSeries.js</button><br>
     Step 2: <button onclick="runScript('beaconSchedule.js')">Run beaconSchedule.js</button><br>
     Step 3: <button onclick="runScript('findRuntimes.js')">Run findRuntimes.js</button><br>
-    Step 4: <button onclick="runScript('updateGCal.js')">Run updateGCal.js</button>
+    Step 4: <button onclick="runScript('updateGCal.js')">Run updateGCal.js</button><br>
+    <hr>
+    <h3>Log Management</h3>
+    <button onclick="runLogCommand('stats')">📊 Log Statistics</button>
+    <button onclick="runLogCommand('rotate')">🔄 Rotate Logs</button>
+    <button onclick="runLogCommand('cleanup')">🧹 Cleanup Old Logs</button>
+    <button onclick="runLogCommand('maintain')">⚙️ Full Maintenance</button>
   </div>
   <h2>Live Log Output</h2>
   <div id="log">(Log output will appear here)</div>

@@ -15,6 +15,7 @@ require('dotenv').config();
 
 // External dependencies
 const puppeteer = require('puppeteer');
+const { launchPuppeteerQuiet } = require('./puppeteerConfig');
 // Removed path dependency; now uses Google Sheets
 const { getSheetRows, setSheetRows } = require('./sheetsUtils');
 const readline = require('readline');
@@ -56,14 +57,15 @@ setupErrorHandling(logger, 'findRuntimes.js');
             output: process.stdout,
         });
         const timeout = setTimeout(() => {
-            logger.info('No input received. Proceeding without replacing runtimes.csv.');
+            logger.info('No input received. Proceeding without replacing runtimes.');
             rl.close();
             resolve(false);
         }, 5000);
-        rl.question('Replace existing runtimes? (Y/N)? ', (answer) => {
+
+        rl.question('Replace existing runtimes? (Y/N): ', (answer) => {
             clearTimeout(timeout);
             rl.close();
-            resolve(answer.trim().toUpperCase() === 'Y');
+            resolve(['y', 'yes'].includes(answer.toLowerCase().trim()));
         });
     });
 
@@ -108,19 +110,8 @@ setupErrorHandling(logger, 'findRuntimes.js');
     let browser;
     const results = [];
     try {
-        // Render.com: Let Puppeteer manage its own browser installation. See https://community.render.com/t/error-could-not-found-chromium/9848
-        browser = await puppeteer.launch({
-            headless: true,
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--no-first-run',
-                '--no-zygote',
-                '--single-process'
-            ]
-        });
+        // Use centralized Puppeteer configuration
+        browser = await launchPuppeteerQuiet();
         for (const [url, title] of urls.entries()) {
             logger.info(`Processing URL: ${url} for Title: ${title}`);
             const page = await browser.newPage();

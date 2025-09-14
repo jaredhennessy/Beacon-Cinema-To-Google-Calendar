@@ -15,6 +15,7 @@ require('dotenv').config();
 
 // External dependencies
 const puppeteer = require('puppeteer');
+const { launchPuppeteerQuiet } = require('./puppeteerConfig');
 const { getSheetRows, setSheetRows } = require('./sheetsUtils');
 
 // Internal dependencies
@@ -46,19 +47,8 @@ setupErrorHandling(logger, 'beaconSchedule.js');
     let browser;
     let eventsAdded = 0;
     try {
-        // Render.com: Let Puppeteer manage its own browser installation. See https://community.render.com/t/error-could-not-found-chromium/9848
-        browser = await puppeteer.launch({
-            headless: true,
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--no-first-run',
-                '--no-zygote',
-                '--single-process'
-            ]
-        });
+        // Use centralized Puppeteer configuration
+        browser = await launchPuppeteerQuiet();
         const page = await browser.newPage();
 
         const navigationSuccess = await navigateWithRetry(page, calendarUrl, { logger });

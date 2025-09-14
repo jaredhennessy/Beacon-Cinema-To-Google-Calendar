@@ -10,15 +10,14 @@ const { execSync } = require('child_process');
 
 /**
  * Ensure Chrome is installed for Puppeteer
+ * @param {boolean} verbose - Whether to log detailed information
  * @returns {Promise<void>}
  */
-async function ensureChromeInstalled() {
+async function ensureChromeInstalled(verbose = false) {
     const cacheDir = process.env.PUPPETEER_CACHE_DIR || 
         (process.platform === 'win32' ? 
             path.join(process.cwd(), '.cache', 'puppeteer') : 
             '/opt/render/.cache/puppeteer');
-    
-    console.log(`Checking Chrome installation in: ${cacheDir}`);
     
     // Check if Chrome is already installed
     if (fs.existsSync(cacheDir)) {
@@ -30,11 +29,11 @@ async function ensureChromeInstalled() {
             );
             
             if (chromeExists) {
-                console.log('Chrome installation found in cache directory');
+                if (verbose) console.log('✓ Chrome installation verified');
                 return;
             }
         } catch (err) {
-            console.log('Error checking cache directory:', err.message);
+            if (verbose) console.log('Error checking cache directory:', err.message);
         }
     }
     
@@ -51,17 +50,17 @@ async function ensureChromeInstalled() {
             ? `npx puppeteer browsers install chrome --path "${cacheDir}"`
             : `PUPPETEER_CACHE_DIR=${cacheDir} npx puppeteer browsers install chrome`;
             
-        console.log('Running:', installCmd);
+        if (verbose) console.log('Running:', installCmd);
         
         execSync(installCmd, { 
-            stdio: 'inherit',
+            stdio: verbose ? 'inherit' : 'pipe',
             timeout: 120000, // 2 minutes timeout
             env: { ...process.env, PUPPETEER_CACHE_DIR: cacheDir }
         });
         
-        console.log('Chrome installation completed');
+        console.log('✓ Chrome installation completed');
     } catch (error) {
-        console.error('Failed to install Chrome:', error.message);
+        console.error('✗ Failed to install Chrome:', error.message);
         
         // Don't throw on non-Linux platforms for testing
         if (process.platform === 'linux') {
@@ -74,9 +73,10 @@ async function ensureChromeInstalled() {
 
 /**
  * Get the best Puppeteer launch configuration for the current environment
+ * @param {boolean} verbose - Whether to log detailed information
  * @returns {Object} Puppeteer launch options
  */
-function getPuppeteerConfig() {
+function getPuppeteerConfig(verbose = false) {
     const isRender = process.env.RENDER || process.platform === 'linux';
     
     const config = {
@@ -115,16 +115,16 @@ function getPuppeteerConfig() {
                     const matches = glob.sync(path);
                     if (matches.length > 0 && fs.existsSync(matches[0])) {
                         config.executablePath = matches[0];
-                        console.log(`Found Chrome at: ${matches[0]}`);
+                        if (verbose) console.log(`Found Chrome at: ${matches[0]}`);
                         break;
                     }
                 } catch (err) {
                     // glob might not be available, continue
-                    console.log('Glob not available, trying manual path search');
+                    if (verbose) console.log('Glob not available, trying manual path search');
                 }
             } else if (fs.existsSync(path)) {
                 config.executablePath = path;
-                console.log(`Found Chrome at: ${path}`);
+                if (verbose) console.log(`Found Chrome at: ${path}`);
                 break;
             }
         }
@@ -135,19 +135,38 @@ function getPuppeteerConfig() {
 
 /**
  * Launch Puppeteer with the best configuration for the current environment
+ * @param {boolean} verbose - Whether to log detailed information (default: false)
  * @returns {Promise} Puppeteer browser instance
  */
-async function launchPuppeteer() {
-    // Ensure Chrome is installed first
-    await ensureChromeInstalled();
+async function launchPuppeteer(verbose = false) {
+    // Check for environment variable to enable verbose logging
+    const isVerbose = verbose || process.env.PUPPETEER_VERBOSE === 'true';
     
-    const config = getPuppeteerConfig();
-    console.log('Launching Puppeteer with config:', JSON.stringify(config, null, 2));
+    // Ensure Chrome is installed first
+    await ensureChromeInstalled(isVerbose);
+    
+    const config = getPuppeteerConfig(isVerbose);
+    
+    if (isVerbose) {
+        console.log('Launching Puppeteer with config:', JSON.stringify(config, null, 2));
+    } else {
+        console.log('🚀 Launching Puppeteer...');
+    }
+    
     return await puppeteer.launch(config);
+}
+
+/**
+ * Launch Puppeteer quietly (minimal logging)
+ * @returns {Promise} Puppeteer browser instance
+ */
+async function launchPuppeteerQuiet() {
+    return await launchPuppeteer(false);
 }
 
 module.exports = {
     getPuppeteerConfig,
     launchPuppeteer,
+    launchPuppeteerQuiet,
     ensureChromeInstalled
 };

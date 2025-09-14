@@ -1,12 +1,12 @@
 /**
  * fullUpdate.js
- * Runs the full Beacon Cinema to Google Calendar update pipeline:
+ * Runs the full Beacon Cinema to Google Calendar update pipeline automatically:
  * 1. beaconSeries.js   - Updates series information in Google Sheet 'series'.
  * 2. beaconSchedule.js - Scrapes the schedule and updates Google Sheet 'schedule'.
  * 3. findRuntimes.js   - Extracts runtimes and updates Google Sheet 'runtimes'.
  * 4. updateGCal.js     - Updates Google Calendar with the latest schedule from Google Sheets.
  * Usage: node fullUpdate.js
- * Each step is executed sequentially. If any step fails, the script logs the error and exits.
+ * Each step is executed sequentially without user prompts. If any step fails, the script logs the error and exits.
  * Ensures header rows in all output Google Sheets after each step.
  * All credentials and configuration are loaded from .env (not beacon-calendar-update.json).
  * Dependencies: ./utils.js, ./logger.js
@@ -15,7 +15,6 @@
 // External dependencies
 const { execSync } = require('child_process');
 const path = require('path');
-const readline = require('readline');
 
 // Internal dependencies
 const { checkFile } = require('./utils');
@@ -89,65 +88,23 @@ function checkStepOutput(sheetName, label) {
     logger.info(`Checked output for ${label} in Google Sheet '${sheetName}'.`);
 }
 
-async function promptToRunScript(scriptName) {
-    // Parameter validation
-    if (!scriptName || typeof scriptName !== 'string') {
-        throw new Error('promptToRunScript: scriptName must be a non-empty string');
-    }
-    
-    return new Promise((resolve) => {
-        const rl = readline.createInterface({
-            input: process.stdin,
-            output: process.stdout,
-        });
-        const timeout = setTimeout(() => {
-            logger.info(`No input received. Proceeding with ${scriptName}.`);
-            rl.close();
-            resolve(true);
-        }, 5000);
-        rl.question(`Do you want to run ${scriptName}? (Y/N): `, (answer) => {
-            clearTimeout(timeout);
-            rl.close();
-            resolve(answer.trim().toUpperCase() === 'Y');
-        });
-    });
-}
-
-async function runConditionalScript(script, label, stepNum) {
-    // Parameter validation
-    if (!script || typeof script !== 'string') {
-        throw new Error('runConditionalScript: script must be a non-empty string');
-    }
-    if (!label || typeof label !== 'string') {
-        throw new Error('runConditionalScript: label must be a non-empty string');
-    }
-    if (typeof stepNum !== 'number' || stepNum < 1) {
-        throw new Error('runConditionalScript: stepNum must be a positive number');
-    }
-    
-    const shouldRun = await promptToRunScript(label);
-        if (shouldRun) {
-            runScript(script, label, stepNum);
-        } else {
-            logger.info(`Skipping ${label} as per user input.`);
-        }
-    }
+// Removed promptToRunScript and runConditionalScript functions - now runs automatically
 
 (async () => {
     try {
         logger.info('Starting fullUpdate.js');
         checkRequiredFiles();
 
-    await runConditionalScript('beaconSeries.js', 'beaconSeries.js', 1);
-    checkStepOutput('series', 'beaconSeries.js');
+        runScript('beaconSeries.js', 'beaconSeries.js', 1);
+        checkStepOutput('series', 'beaconSeries.js');
 
-    await runConditionalScript('beaconSchedule.js', 'beaconSchedule.js', 2);
-    checkStepOutput('schedule', 'beaconSchedule.js');
+        runScript('beaconSchedule.js', 'beaconSchedule.js', 2);
+        checkStepOutput('schedule', 'beaconSchedule.js');
 
-    await runConditionalScript('findRuntimes.js', 'findRuntimes.js', 3);
-    checkStepOutput('runtimes', 'findRuntimes.js');
+        runScript('findRuntimes.js', 'findRuntimes.js', 3);
+        checkStepOutput('runtimes', 'findRuntimes.js');
 
-    await runConditionalScript('updateGCal.js', 'updateGCal.js', 4);
+        runScript('updateGCal.js', 'updateGCal.js', 4);
 
         logger.info('fullUpdate.js completed all steps.');
     } catch (err) {

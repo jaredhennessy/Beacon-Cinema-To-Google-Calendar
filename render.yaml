@@ -15,6 +15,15 @@ services:
       - key: PUPPETEER_SKIP_CHROMIUM_DOWNLOAD
         value: false
         sync: false
+      - key: MAX_LOG_SIZE_MB
+        value: 5
+        sync: false
+      - key: MAX_LOG_FILES
+        value: 3
+        sync: false
+      - key: LOG_RETENTION_DAYS
+        value: 14
+        sync: false
     autoDeploy: true
     plan: free
     rootDir: .

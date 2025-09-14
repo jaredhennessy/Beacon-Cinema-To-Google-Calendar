@@ -14,7 +14,9 @@ This project automates scraping [The Beacon Cinema](https://thebeacon.film/calen
   - Venue location (The Beacon Cinema)
   - Direct links to film detail pages
 - **Google Sheets Integration**: Stores and manages data in Google Sheets for series, schedules, and runtimes
-- **Interactive Execution**: User prompts with timeouts (default 5 seconds)
+- **Automated Execution**: Runs complete pipeline without user prompts (ideal for web deployments)
+- **Render.com Ready**: Optimized Puppeteer configuration for cloud deployment
+- **Minimal Logging**: Clean production output with optional verbose debugging mode
 - **Comprehensive Error Handling**: Robust error handling with detailed logging
 - **Data Deduplication**: Automatic deduplication of events and data with warnings
 - **Parameter Validation**: Comprehensive input validation across all functions
@@ -34,9 +36,21 @@ This project automates scraping [The Beacon Cinema](https://thebeacon.film/calen
 ## Dependencies
 
 - Install all dependencies via `npm install`:
-  - `puppeteer` (for web scraping; downloads Chromium automatically, but Linux may require extra system libraries—see [Puppeteer troubleshooting](https://pptr.dev/troubleshooting/))
+  - `puppeteer` (for web scraping with centralized Chrome configuration)
   - `googleapis` (for Google Calendar and Sheets API)
   - `dotenv` (for environment variables)
+
+### Puppeteer Configuration
+
+This project includes optimized Puppeteer configuration for both local development and cloud deployment:
+
+- **Centralized Configuration**: All scripts use `puppeteerConfig.js` for consistent Chrome settings
+- **Render.com Ready**: Automated Chrome installation and optimized launch arguments
+- **Minimal Logging**: Clean production output with `🚀 Launching Puppeteer...` instead of verbose configuration dumps
+- **Debug Mode**: Set `PUPPETEER_VERBOSE=true` environment variable for detailed logging when needed
+- **Cross-Platform**: Works on Windows (development) and Linux (Render.com deployment)
+
+For deployment details, see `PUPPETEER_RENDER_SETUP.md`.
 
 ## Required Files and Google Sheets Setup
 
@@ -69,49 +83,114 @@ This project automates scraping [The Beacon Cinema](https://thebeacon.film/calen
      - In the [Google Cloud Console](https://console.cloud.google.com/), go to **IAM & Admin > Service Accounts**.
      - Locate your service account and copy the **Email** field (usually ends with `@<project>.iam.gserviceaccount.com`).
 
+4. **Get the Sheet ID** from the URL (the part after `/d/` and before `/edit`).
+
+5. **Set the Sheet ID in your `.env` file:**
+
+   ```env
+   SPREADSHEET_ID=your_google_sheet_id
+   ```
+
+6. **Populate the `seriesIndex` tab** with your film series definitions:
+
+   - Columns: `seriesName`, `seriesURL`, `seriesTag`
+   - Example:
+
+     | seriesName | seriesURL | seriesTag |
+     |------------|-----------|-----------|
+     | THE ABSURD MYSTERY... | <https://thebeacon.film/programs/entry/the-absurd-mystery>... | lynchian |
+     | TO LIVE IS TO DREAM... | <https://thebeacon.film/programs/entry/to-live-is-to-dream>... | davidlynch |
+
+   - You can add or remove series as needed.
+
+7. **Leave the other tabs empty**; scripts will populate them automatically.
+
 ## Web Interface
 
 You can run scripts and view logs in real time using the built-in web interface:
 
 1. Start the server:
 
-  ```bash
-  npm start
-  ```
+   ```bash
+   npm start
+   ```
 
-  This will launch the Express server (see `webserver.js`) at [http://localhost:3000](http://localhost:3000).
+   This will launch the Express server (see `webserver.js`) at [http://localhost:3000](http://localhost:3000).
 
 2. Open your browser and go to [http://localhost:3000](http://localhost:3000).
 
-3. Use the buttons to run any script (`fullUpdate.js`, `beaconSeries.js`, etc.).
+3. Use the buttons to run any script:
+   - **🧪 Test Puppeteer** - Debug Puppeteer Chrome installation
+   - **Run Full Update** - Complete automated pipeline (no prompts)
+   - **Individual Scripts** - Run beaconSeries.js, beaconSchedule.js, etc.
 
-- The log output will appear live in the "Live Log Output" section.
+4. The log output will appear live in the "Live Log Output" section.
 
-**Note:** The web interface is for local use and does not require authentication. All scripts run in the server environment and output logs to both the browser and log files.
-4. **Get the Sheet ID** from the URL (the part after `/d/` and before `/edit`).
-5. **Set the Sheet ID in your `.env` file:**
+**Note:** The web interface is ideal for running scripts without terminal access. The Full Update button runs the complete pipeline automatically without any user prompts, making it perfect for production deployments.
 
-  ```env
-  SHEET_ID=your_google_sheet_id
-  ```
+## Deployment
 
-6. **Populate the `seriesIndex` tab** with your film series definitions:
+### Render.com Deployment
 
-- Columns: `seriesName`, `seriesURL`, `seriesTag`
-- Example:
+This project is optimized for deployment on Render.com with the following features:
 
-    | seriesName | seriesURL | seriesTag |
-    |------------|-----------|-----------|
-    | THE ABSURD MYSTERY... | <https://thebeacon.film/programs/entry/the-absurd-mystery>... | lynchian |
-    | TO LIVE IS TO DREAM... | <https://thebeacon.film/programs/entry/to-live-is-to-dream>... | davidlynch |
+- **Automated Chrome Installation**: `render.yaml` configures Chrome installation during build
+- **Optimized Launch Arguments**: Puppeteer configured for container environments
+- **Minimal Logging**: Clean production logs without verbose configuration dumps
+- **No User Prompts**: Full pipeline runs automatically without interaction
 
-- You can add or remove series as needed.
+Key deployment files:
 
-7. **Leave the other tabs empty**; scripts will populate them automatically.
+- `render.yaml` - Render.com service configuration
+- `puppeteerConfig.js` - Centralized Puppeteer configuration
+- `PUPPETEER_RENDER_SETUP.md` - Detailed deployment documentation
+
+### Environment Variables
+
+Required environment variables for deployment:
+
+- `PUPPETEER_CACHE_DIR=/opt/render/.cache/puppeteer`
+- `PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false`
+- `PUPPETEER_VERBOSE=true` (optional, for debugging)
+- All Google service account credentials
+- `CALENDAR_ID` and `SPREADSHEET_ID`
 
 ## Logging
 
 All scripts use a centralized logging system (`logger.js`) that writes to both console and log files with timestamp formatting and error handling.
+
+### Log Management Features
+
+**Automatic Log Rotation**:
+
+- Log files are automatically rotated when they exceed 10MB (configurable)
+- Keeps up to 5 rotated files per script (configurable)
+- Old files are automatically deleted after 30 days (configurable)
+
+**Manual Log Management**:
+
+```bash
+# View log statistics
+npm run log-stats
+
+# Rotate large log files
+npm run log-rotate
+
+# Clean up old log files  
+npm run log-cleanup
+
+# Full maintenance (rotate + cleanup + compress)
+npm run log-maintain
+```
+
+**Web Interface**: Log management is available in the web interface with dedicated buttons for statistics, rotation, cleanup, and maintenance.
+
+**Configuration**: Set environment variables to customize log behavior:
+
+- `MAX_LOG_SIZE_MB=10` - Size limit before rotation
+- `MAX_LOG_FILES=5` - Number of rotated files to keep
+- `LOG_RETENTION_DAYS=30` - Days to keep old log files
+- `COMPRESS_LOGS=true` - Enable compression of rotated logs (Linux only)
 
 ### Usage
 
@@ -249,7 +328,7 @@ or:
 node fullUpdate.js
 ```
 
-This script sequentially executes the following steps, prompting before each (with a 5-second timeout defaulting to yes):
+This script automatically executes the complete pipeline without user prompts, making it perfect for web deployments and automated execution:
 
 1. `beaconSeries.js` - Updates film series data from the `Series` tab in Google Sheets.
 2. `beaconSchedule.js` - Scrapes the current schedule and writes to the `Schedule` tab in Google Sheets.
@@ -331,6 +410,23 @@ If you encounter authentication errors, verify the following:
 - **Node.js Version**: Scripts require Node.js 14+ and may not work with older versions
 - **Puppeteer/Chromium Issues**: If Puppeteer fails to launch, install missing system dependencies
 - **Network Timeouts**: The `navigateWithRetry()` utility handles most timeout issues automatically
+
+## Recent Updates
+
+### Version 2.0 - Production Deployment Ready
+
+- **🚀 Render.com Optimization**: Complete Puppeteer configuration for cloud deployment
+- **🔇 Minimal Logging**: Reduced verbose output for cleaner production logs
+- **⚡ Automated Execution**: Removed user prompts from `fullUpdate.js` for seamless automation
+- **🔧 Centralized Configuration**: All Puppeteer scripts use `puppeteerConfig.js` for consistency
+- **🐛 Debug Mode**: Optional verbose logging via `PUPPETEER_VERBOSE=true` environment variable
+- **📚 Enhanced Documentation**: Added `PUPPETEER_RENDER_SETUP.md` with deployment guidelines
+
+### Key Improvements
+
+- **Before**: Verbose configuration dumps, user prompts with timeouts, manual Chrome setup
+- **After**: Clean `🚀 Launching Puppeteer...` output, fully automated pipeline, intelligent Chrome installation
+- **Deployment**: Ready for production deployment on Render.com with optimized container configuration
 
 ## License
 

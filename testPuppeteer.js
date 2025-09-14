@@ -82,7 +82,7 @@ if (fs.existsSync(cacheDir)) {
         let browser;
         try {
             console.log('Attempting to launch Puppeteer...');
-            browser = await launchPuppeteer();
+            browser = await launchPuppeteer(true); // Enable verbose logging for debugging
             
             console.log('✓ Puppeteer launched successfully!');
             

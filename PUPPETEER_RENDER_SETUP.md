@@ -39,12 +39,14 @@ A centralized configuration module that:
 - Installs Chrome if missing (fallback mechanism)
 - Provides optimized launch arguments for Render.com
 - Works cross-platform for local development
+- **Minimal logging by default** for cleaner production output
 
 Key functions:
 
 - `ensureChromeInstalled()` - Verifies/installs Chrome
 - `getPuppeteerConfig()` - Returns optimized launch configuration
-- `launchPuppeteer()` - Combines installation check + launch
+- `launchPuppeteer(verbose)` - Combines installation check + launch with optional verbose logging
+- `launchPuppeteerQuiet()` - Quiet launch (minimal logging, recommended for production)
 
 ### 3. Updated Application Scripts
 
@@ -60,6 +62,23 @@ All Puppeteer scripts now use the centralized configuration:
 
 - `PUPPETEER_CACHE_DIR=/opt/render/.cache/puppeteer` - Chrome installation location
 - `PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false` - Allow Chrome download
+- `PUPPETEER_VERBOSE=true` - Enable verbose logging (optional, for debugging)
+
+### Logging Control
+
+**Production (Default)**: Minimal logging with simple status messages
+
+```bash
+🚀 Launching Puppeteer...
+```
+
+**Debug Mode**: Enable verbose logging when needed
+
+```bash
+# Set environment variable for detailed logging
+export PUPPETEER_VERBOSE=true
+# Or call launchPuppeteer(true) directly in code
+```
 
 ### Chrome Launch Arguments
 

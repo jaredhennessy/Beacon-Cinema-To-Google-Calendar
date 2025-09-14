@@ -9,7 +9,7 @@ require('dotenv').config();
 // @ts-check
 // External dependencies
 const puppeteer = require('puppeteer');
-const { launchPuppeteer } = require('./puppeteerConfig');
+const { launchPuppeteerQuiet } = require('./puppeteerConfig');
 const { getSheetRows, setSheetRows } = require('./sheetsUtils');
 
 // Internal dependencies
@@ -46,7 +46,7 @@ async function executeScript(seriesUrl, seriesTag, allTitles) {
     let browser;
     try {
         // Render.com: Use centralized Puppeteer configuration
-        browser = await launchPuppeteer();
+        browser = await launchPuppeteerQuiet();
         const page = await browser.newPage();
         
         const navigationSuccess = await navigateWithRetry(page, seriesUrl, { logger });
