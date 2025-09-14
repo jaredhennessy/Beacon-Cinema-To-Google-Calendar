@@ -1,7 +1,10 @@
+
 /**
  * beaconSeries.js
- * Scrapes series film titles from The Beacon Cinema website.
+ * Scrapes series film titles from The Beacon Cinema website and updates Google Sheet 'series'.
  */
+
+require('dotenv').config();
 
 // @ts-check
 // External dependencies

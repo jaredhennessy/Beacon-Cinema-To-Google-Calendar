@@ -1,15 +1,17 @@
 /**
  * beaconSchedule.js
- * Scrapes event data from The Beacon Film Calendar and updates files/schedule.csv.
+ * Scrapes event data from The Beacon Film Calendar and updates Google Sheet 'schedule'.
  * Usage: node beaconSchedule.js
  * - Scrapes event titles, dates, times, and URLs from the calendar page.
- * - Matches titles with SeriesTag from files/series.csv.
+ * - Matches titles with SeriesTag from Google Sheet 'series'.
  * - Adds a DateRecorded timestamp to each record.
- * - Removes past screenings from files/schedule.csv before writing new data.
- * - Writes the updated schedule to files/schedule.csv.
- * - Ensures header rows in all CSVs.
- * Dependencies: puppeteer, csv-writer, readline, ./utils.js
+ * - Removes past screenings from Google Sheet 'schedule' before writing new data.
+ * - Writes the updated schedule to Google Sheet 'schedule'.
+ * - Ensures header rows in all Google Sheets.
+ * Dependencies: puppeteer, readline, ./utils.js, ./sheetsUtils.js
  */
+
+require('dotenv').config();
 
 // External dependencies
 const puppeteer = require('puppeteer');

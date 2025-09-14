@@ -8,6 +8,7 @@
  * Usage: node fullUpdate.js
  * Each step is executed sequentially. If any step fails, the script logs the error and exits.
  * Ensures header rows in all output Google Sheets after each step.
+ * All credentials and configuration are loaded from .env (not beacon-calendar-update.json).
  * Dependencies: ./utils.js, ./logger.js
  */
 

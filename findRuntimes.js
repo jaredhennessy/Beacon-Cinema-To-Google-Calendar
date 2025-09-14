@@ -11,6 +11,8 @@
  * Dependencies: puppeteer, readline, ./sheetsUtils.js, ./utils.js
  */
 
+require('dotenv').config();
+
 // External dependencies
 const puppeteer = require('puppeteer');
 // Removed path dependency; now uses Google Sheets

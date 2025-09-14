@@ -11,12 +11,14 @@
  * - Ensures header rows in all Google Sheets
  * - Provides error handling and clear output messages
  * 
- * Required files:
- * - beacon-calendar-update.json (service account key)
- * - .env with CALENDAR_ID
+ * Required environment variables:
+ * - Service account credentials (see .env)
+ * - CALENDAR_ID
  * 
  * Dependencies: googleapis, dotenv, ./gcalAuth.js, ./sheetsUtils.js, ./utils.js
  */
+
+require('dotenv').config();
 
 // External dependencies
 const { google } = require('googleapis');

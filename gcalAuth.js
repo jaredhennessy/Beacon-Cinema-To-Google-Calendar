@@ -8,12 +8,12 @@
  * 
  * Usage: const client = require('./gcalAuth').getServiceAccountClient()
  * 
- * Required files/env:
- * - beacon-calendar-update.json (service account key) must be in project root
+ * Required environment variables:
+ * - Service account credentials (see .env)
  * - CALENDAR_ID must be set in .env file and shared with service account
  * 
  * Common authentication issues:
- * - Ensure beacon-calendar-update.json (service account key) is present and valid
+ * - Ensure all required service account variables are set in .env
  * - CALENDAR_ID must be set in your .env file
  * - Google Cloud project must have Calendar API enabled
  * - Service account email must be added as editor to calendar in Google Calendar UI
@@ -21,11 +21,11 @@
  * - OAuth2 and token.json are not used, only service account authentication
  */
 
+require('dotenv').config();
+
 // External dependencies
-const fs = require('fs');
 const { google } = require('googleapis');
 
-const SERVICE_ACCOUNT_PATH = 'beacon-calendar-update.json';
 const SCOPES = ['https://www.googleapis.com/auth/calendar'];
 
 // Library-only module
@@ -40,55 +40,30 @@ if (require.main === module) {
  * @throws {Error} If service account file is missing or invalid, with troubleshooting info
  */
 function getServiceAccountClient() {
-    const keyFile = SERVICE_ACCOUNT_PATH;
-    
-    // Check if service account file exists
-    if (!fs.existsSync(keyFile)) {
+    // Load credentials from environment variables
+    const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
+    const privateKey = process.env.GOOGLE_PRIVATE_KEY;
+
+    if (!clientEmail || !privateKey) {
         throw new Error(
-            `Service account file not found: ${keyFile}\n\n` +
+            'Missing Google service account credentials in environment variables.\n\n' +
             'Troubleshooting:\n' +
-            '- Ensure beacon-calendar-update.json is in the project root\n' +
-            '- Download a new key from Google Cloud Console if needed\n' +
-            '- Check file permissions'
+            '- Set GOOGLE_CLIENT_EMAIL and GOOGLE_PRIVATE_KEY in your .env file or Render environment.\n' +
+            '- Download a new key from Google Cloud Console if needed.\n' +
+            '- Ensure the service account has Calendar API access.'
         );
     }
-
-    try {
-        // Parse and validate service account credentials
-        const credentials = JSON.parse(fs.readFileSync(keyFile, 'utf8'));
-        
-        if (!credentials.client_email || !credentials.private_key) {
-            throw new Error(
-                'Invalid service account credentials - missing required fields\n\n' +
-                'Troubleshooting:\n' +
-                '- Download a new key from Google Cloud Console\n' +
-                '- Ensure the service account has Calendar API access\n' +
-                '- Required fields: client_email, private_key'
-            );
-        }
-
-        // Create and return JWT client
-        const client = new google.auth.JWT({
-            email: credentials.client_email,
-            key: credentials.private_key,
-            scopes: SCOPES,
-        });
-        
-        return client;
-    } catch (error) {
-        // Enhance error message if it's a JSON syntax error
-        if (error.name === 'SyntaxError') {
-            throw new Error(
-                'Invalid service account file format - not valid JSON\n\n' +
-                'Troubleshooting:\n' +
-                '- Download a new key from Google Cloud Console\n' +
-                '- Do not modify the JSON file manually\n' +
-                '- Ensure the file is not corrupted'
-            );
-        }
-        // Re-throw other errors with their original message
-        throw error;
+    if (!privateKey.includes('-----BEGIN PRIVATE KEY-----')) {
+        throw new Error('GOOGLE_PRIVATE_KEY in .env is missing BEGIN PRIVATE KEY header or is not properly formatted.');
     }
+
+    // Create and return JWT client
+    const client = new google.auth.JWT({
+        email: clientEmail,
+        key: privateKey,
+        scopes: SCOPES,
+    });
+    return client;
 }
 
 module.exports = { getServiceAccountClient };
