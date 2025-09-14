@@ -12,6 +12,9 @@ services:
       - key: PUPPETEER_CACHE_DIR
         value: /opt/render/.cache/puppeteer
         sync: false
+      - key: PUPPETEER_SKIP_CHROMIUM_DOWNLOAD
+        value: false
+        sync: false
     autoDeploy: true
     plan: free
     rootDir: .

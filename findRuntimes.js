@@ -111,7 +111,15 @@ setupErrorHandling(logger, 'findRuntimes.js');
         // Render.com: Let Puppeteer manage its own browser installation. See https://community.render.com/t/error-could-not-found-chromium/9848
         browser = await puppeteer.launch({
             headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox']
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+                '--no-first-run',
+                '--no-zygote',
+                '--single-process'
+            ]
         });
         for (const [url, title] of urls.entries()) {
             logger.info(`Processing URL: ${url} for Title: ${title}`);

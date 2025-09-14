@@ -16,7 +16,8 @@ const scripts = [
   'beaconSeries.js',
   'beaconSchedule.js',
   'findRuntimes.js',
-  'updateGCal.js'
+  'updateGCal.js',
+  'testPuppeteer.js'
 ];
 
 app.get('/api/run/:script', (req, res) => {
