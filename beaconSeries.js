@@ -9,6 +9,7 @@ require('dotenv').config();
 // @ts-check
 // External dependencies
 const puppeteer = require('puppeteer');
+const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/opt/render/.cache/puppeteer/chrome/linux-135.0.7049.84/chrome-linux64/chrome';
 const { getSheetRows, setSheetRows } = require('./sheetsUtils');
 
 // Internal dependencies
@@ -43,7 +44,7 @@ async function executeScript(seriesUrl, seriesTag, allTitles) {
     }
     
     try {
-        const browser = await puppeteer.launch({ headless: true });
+    const browser = await puppeteer.launch({ headless: true, executablePath: CHROME_PATH });
         const page = await browser.newPage();
         
         const navigationSuccess = await navigateWithRetry(page, seriesUrl, { logger });

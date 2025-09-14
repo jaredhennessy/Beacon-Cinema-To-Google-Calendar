@@ -22,6 +22,8 @@ const logger = require('./logger')('beaconSchedule');
 const { deduplicateRows, navigateWithRetry } = require('./utils');
 const { setupErrorHandling, handleError } = require('./errorHandler');
 
+const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/opt/render/.cache/puppeteer/chrome/linux-135.0.7049.84/chrome-linux64/chrome';
+
 setupErrorHandling(logger, 'beaconSchedule.js');
 
 (async () => {
@@ -44,7 +46,7 @@ setupErrorHandling(logger, 'beaconSchedule.js');
     let browser;
     let eventsAdded = 0;
     try {
-        browser = await puppeteer.launch();
+        browser = await puppeteer.launch({ headless: true, executablePath: CHROME_PATH });
         const page = await browser.newPage();
 
         const navigationSuccess = await navigateWithRetry(page, calendarUrl, { logger });

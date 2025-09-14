@@ -15,6 +15,7 @@ require('dotenv').config();
 
 // External dependencies
 const puppeteer = require('puppeteer');
+const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/opt/render/.cache/puppeteer/chrome/linux-135.0.7049.84/chrome-linux64/chrome';
 // Removed path dependency; now uses Google Sheets
 const { getSheetRows, setSheetRows } = require('./sheetsUtils');
 const readline = require('readline');
@@ -108,7 +109,7 @@ setupErrorHandling(logger, 'findRuntimes.js');
     let browser;
     const results = [];
     try {
-        browser = await puppeteer.launch();
+        browser = await puppeteer.launch({ headless: true, executablePath: CHROME_PATH });
         for (const [url, title] of urls.entries()) {
             logger.info(`Processing URL: ${url} for Title: ${title}`);
             const page = await browser.newPage();
