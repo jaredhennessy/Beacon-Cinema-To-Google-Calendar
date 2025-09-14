@@ -5,6 +5,7 @@
  */
 
 const puppeteer = require('puppeteer');
+const { getPuppeteerConfig, launchPuppeteer } = require('./puppeteerConfig');
 const fs = require('fs');
 const path = require('path');
 
@@ -37,23 +38,16 @@ if (fs.existsSync(cacheDir)) {
 }
 
 // Test Puppeteer launch
+console.log('\n=== Puppeteer Configuration ===');
+const puppeteerConfig = getPuppeteerConfig();
+console.log('Puppeteer config:', JSON.stringify(puppeteerConfig, null, 2));
+
 console.log('\n=== Puppeteer Launch Test ===');
 (async () => {
     let browser;
     try {
         console.log('Attempting to launch Puppeteer...');
-        browser = await puppeteer.launch({
-            headless: true,
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--no-first-run',
-                '--no-zygote',
-                '--single-process'
-            ]
-        });
+        browser = await launchPuppeteer();
         
         console.log('✓ Puppeteer launched successfully!');
         
