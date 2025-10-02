@@ -159,14 +159,28 @@ async function connectToCalendar() {
             if (row.URL) descriptionParts.push(`URL: ${row.URL}`);
             const description = descriptionParts.join('\n');
 
-            const startDateTime = new Date(`${row.Date}T${row.Time}`);
-            let endDateTime;
+            // Create datetime strings in the correct format for Google Calendar API
+            // When specifying timeZone, Google expects format: YYYY-MM-DDTHH:MM:SS
+            const startDateTimeString = `${row.Date}T${row.Time}:00`;
+            
+            // Calculate end time
+            let endDateTimeString;
             const runtimeMatch = runtimeValue && runtimeValue.match(/^(\d+)\s*minutes$/i);
             if (runtimeMatch) {
                 const runtimeMinutes = parseInt(runtimeMatch[1], 10) + 15;
-                endDateTime = new Date(startDateTime.getTime() + runtimeMinutes * 60000);
+                // Create a temporary date to calculate end time, but format as string for API
+                const tempStart = new Date(`${startDateTimeString}`);
+                const tempEnd = new Date(tempStart.getTime() + runtimeMinutes * 60000);
+                const hours = tempEnd.getHours().toString().padStart(2, '0');
+                const minutes = tempEnd.getMinutes().toString().padStart(2, '0');
+                endDateTimeString = `${row.Date}T${hours}:${minutes}:00`;
             } else {
-                endDateTime = new Date(startDateTime.getTime() + 2 * 60 * 60000);
+                // Default 2 hour duration
+                const tempStart = new Date(`${startDateTimeString}`);
+                const tempEnd = new Date(tempStart.getTime() + 2 * 60 * 60000);
+                const hours = tempEnd.getHours().toString().padStart(2, '0');
+                const minutes = tempEnd.getMinutes().toString().padStart(2, '0');
+                endDateTimeString = `${row.Date}T${hours}:${minutes}:00`;
             }
 
             const key = `${row.Title}|${row.Date}|${row.Time}`;
@@ -176,11 +190,11 @@ async function connectToCalendar() {
             eventsToCreate.push({
                 summary: formattedTitle,
                 start: {
-                    dateTime: startDateTime.toISOString(),
+                    dateTime: startDateTimeString,
                     timeZone: TIME_ZONE,
                 },
                 end: {
-                    dateTime: endDateTime.toISOString(),
+                    dateTime: endDateTimeString,
                     timeZone: TIME_ZONE,
                 },
                 location: "The Beacon Cinema, 4405 Rainier Ave S, Seattle, WA 98118, USA",
