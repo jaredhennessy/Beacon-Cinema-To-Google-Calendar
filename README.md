@@ -25,11 +25,20 @@ deployment on Render.com.
 
 ## Requirements
 
-- **Node.js 20 or newer.** This is what the dependencies need, not a preference: `glob`
-  requires `20 || >=22`, `puppeteer` and `express` require `>=18`, and
-  `fs.readdirSync(dir, { recursive: true })` needs 18.17+. On an older runtime,
-  `require('glob')` fails inside a `try/catch` in `getPuppeteerConfig()` that swallows the
-  error, so Chrome discovery quietly falls back instead of telling you what went wrong.
+- **Node.js 20.x or 22.x.** The range is bounded at both ends by dependencies, so it is not
+  a preference. `.node-version` pins 22, the newest version verified against this
+  dependency tree.
+  - **Lower bound**: `glob` requires `20 || >=22` (note it excludes 21), `puppeteer` and
+    `express` require `>=18`, and `fs.readdirSync(dir, { recursive: true })` needs 18.17+.
+    On an older runtime, `require('glob')` fails inside a `try/catch` in
+    `getPuppeteerConfig()` that swallows the error, so Chrome discovery quietly falls back
+    instead of telling you what went wrong.
+  - **Upper bound**: Node 24 removed `SlowBuffer`, which `buffer-equal-constant-time` reads
+    at module load. `googleapis` still reaches it through
+    `google-auth-library → jws → jwa`, so on Node 24+ the Google auth stack throws
+    `Cannot read properties of undefined (reading 'prototype')` before any of this
+    project's code runs. Upgrading does not help — see
+    [Runtime issues](#runtime-issues).
 - A Google Cloud service account with the Calendar API and Sheets API enabled
 - A Google Sheet and a Google Calendar, both shared with the service account
 
@@ -340,6 +349,11 @@ fails on Render.
 ## Deployment (Render.com)
 
 - See [render.yaml](render.yaml) and [PUPPETEER_RENDER_SETUP.md](PUPPETEER_RENDER_SETUP.md).
+- **The Node version is pinned to 22 by [.node-version](.node-version), and it matters** —
+  Render otherwise resolves a newer major, and Node 24+ breaks the Google auth stack at
+  `require` time. A `NODE_VERSION` environment variable set in the dashboard takes
+  precedence over the file, so make sure it is absent or also set to 22. Confirm the build
+  log reports Node 22.x after deploying.
 - **`render.yaml` does not declare the Google credential variables.** All 11 `GOOGLE_*`
   variables must be set in the Render dashboard, or the app exits on startup.
   `SPREADSHEET_ID`, `CALENDAR_ID` and `TIME_ZONE` are declared in `render.yaml` with
@@ -501,8 +515,18 @@ finding entries, so check its log first when tags go missing.
 
 ### Runtime issues
 
-- **Node.js version**: Node.js 20 or newer is required — see
-  [Requirements](#requirements). `fullUpdate.js` checks this and exits early.
+- **Node.js version**: Node 20.x or 22.x is required — see [Requirements](#requirements).
+  `fullUpdate.js` checks the lower bound and exits early.
+- **`Cannot read properties of undefined (reading 'prototype')` from
+  `buffer-equal-constant-time`**, with `jwa` in the stack trace, means **Node 24 or newer**.
+  That package reads `require('buffer').SlowBuffer`, which Node 24 removed, and
+  `googleapis` still reaches it via `google-auth-library → jws → jwa`. It fails at
+  `require` time, so the first script to touch Google auth dies before doing any work.
+
+  Upgrading dependencies does **not** fix this: `buffer-equal-constant-time` has only ever
+  published 1.0.0 and 1.0.1, and even the newest `google-auth-library` still depends on
+  `jws → jwa → buffer-equal-constant-time`. Pin the runtime instead — `.node-version` sets
+  22. On Render, check that no `NODE_VERSION` environment variable is overriding it.
 - **Puppeteer/Chromium**: if Puppeteer fails to launch, install the missing system
   dependencies — see [PUPPETEER_RENDER_SETUP.md](PUPPETEER_RENDER_SETUP.md) — or run
   `node testPuppeteer.js` to check the setup.
