@@ -4,8 +4,7 @@
  * This script helps verify that Puppeteer can launch Chrome correctly on Render.com
  */
 
-const puppeteer = require('puppeteer');
-const { getPuppeteerConfig, launchPuppeteer, ensureChromeInstalled } = require('./puppeteerConfig');
+const { getPuppeteerConfig, launchPuppeteer, launchPuppeteerQuiet, ensureChromeInstalled } = require('./puppeteerConfig');
 const fs = require('fs');
 const path = require('path');
 
@@ -93,8 +92,20 @@ if (fs.existsSync(cacheDir)) {
             
             await browser.close();
             console.log('✓ Browser closed successfully');
+
+            // The scrapers all launch through launchPuppeteerQuiet(), so exercise that
+            // wrapper too. It resolves to the same config as the verbose launch above —
+            // the flag only gates console output — but this catches a break in the
+            // wrapper itself rather than assuming it.
+            console.log('\n=== Quiet Launch Test (the path the scrapers use) ===');
+            const quietBrowser = await launchPuppeteerQuiet();
+            console.log('✓ launchPuppeteerQuiet() launched successfully');
+            await quietBrowser.close();
+            console.log('✓ Browser closed successfully');
+
             console.log('\n=== Test completed successfully! ===');
-            
+
+
         } catch (error) {
             console.error('✗ Puppeteer launch failed:', error.message);
             console.error('Full error:', error);
