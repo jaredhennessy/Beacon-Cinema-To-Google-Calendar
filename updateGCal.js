@@ -5,67 +5,36 @@
  * Usage: node updateGCal.js
  * 
  * Operations:
- * - Deletes all upcoming events from the specified Google Calendar
+ * - Reads Google Sheets 'schedule', 'runtimes' and 'seriesIndex' (read-only)
+ * - Skips rows dated before today, then deletes all upcoming events from the calendar
  * - Creates new events with runtime and series info if available
  * - Uses service account authentication (no OAuth2 or tokens needed)
- * - Ensures header rows in all Google Sheets
  * - Provides error handling and clear output messages
- * 
+ *
  * Required environment variables:
  * - Service account credentials (see .env)
  * - CALENDAR_ID
- * 
- * Dependencies: googleapis, dotenv, ./gcalAuth.js, ./sheetsUtils.js, ./utils.js
+ *
+ * Dependencies: googleapis, dotenv, ./gcalAuth.js, ./sheetsUtils.js, ./utils.js,
+ *   ./logger.js, ./errorHandler.js
  */
 
 require('dotenv').config();
 
 // External dependencies
 const { google } = require('googleapis');
-const dotenv = require('dotenv');
-// Removed path dependency; now uses Google Sheets
 const { getSheetRows } = require('./sheetsUtils');
 
 // Internal dependencies
 const { getServiceAccountClient } = require('./gcalAuth');
-const { deduplicateRows } = require('./utils');
+const { deduplicateRows, addDaysToISODate } = require('./utils');
+const { titleCase } = require('./titleCase');
 const logger = require('./logger')('updateGCal');
-const { setupErrorHandling, handleError } = require('./errorHandler');
-
-dotenv.config();
+const { setupErrorHandling } = require('./errorHandler');
 
 const TIME_ZONE = process.env.TIME_ZONE || 'America/Los_Angeles';
 
 setupErrorHandling(logger, 'updateGCal.js');
-
-/**
- * Formats a string to title case with proper capitalization
- * @param {string} str - String to format
- * @returns {string} Formatted string in title case
- */
-function formatString(str) {
-    // Parameter validation
-    if (str === null || str === undefined) {
-        return '';
-    }
-    if (typeof str !== 'string') {
-        throw new Error('formatString: str must be a string');
-    }
-    
-    return str
-        .replace(/^"|"$/g, '')
-        .split(' ')
-        .map(word => {
-            const firstCharIndex = [...word].findIndex(char => char.match(/[a-zA-Z]/));
-            if (firstCharIndex === -1) return word;
-            return (
-                word.slice(0, firstCharIndex) +
-                word.charAt(firstCharIndex).toUpperCase() +
-                word.slice(firstCharIndex + 1).toLowerCase()
-            );
-        })
-        .join(' ');
-}
 
 if (!process.env.CALENDAR_ID) {
     logger.error('CALENDAR_ID must be set in your .env file.');
@@ -147,9 +116,9 @@ async function connectToCalendar() {
                 logger.error(`Invalid time format for event "${row.Title}": ${row.Time}. Expected HH:MM (24-hour).`);
                 continue;
             }
-            const formattedTitle = formatString(row.Title);
+            const formattedTitle = titleCase(row.Title);
             const formattedSeriesName = row.SeriesTag && seriesMap.has(row.SeriesTag)
-                ? formatString(seriesMap.get(row.SeriesTag))
+                ? titleCase(seriesMap.get(row.SeriesTag))
                 : '';
 
             const descriptionParts = [];
@@ -162,26 +131,22 @@ async function connectToCalendar() {
             // Create datetime strings in the correct format for Google Calendar API
             // When specifying timeZone, Google expects format: YYYY-MM-DDTHH:MM:SS
             const startDateTimeString = `${row.Date}T${row.Time}:00`;
-            
-            // Calculate end time
-            let endDateTimeString;
+
+            // Calculate end time. Runtime plus 15 minutes when known, otherwise
+            // a 2 hour default.
             const runtimeMatch = runtimeValue && runtimeValue.match(/^(\d+)\s*minutes$/i);
-            if (runtimeMatch) {
-                const runtimeMinutes = parseInt(runtimeMatch[1], 10) + 15;
-                // Create a temporary date to calculate end time, but format as string for API
-                const tempStart = new Date(`${startDateTimeString}`);
-                const tempEnd = new Date(tempStart.getTime() + runtimeMinutes * 60000);
-                const hours = tempEnd.getHours().toString().padStart(2, '0');
-                const minutes = tempEnd.getMinutes().toString().padStart(2, '0');
-                endDateTimeString = `${row.Date}T${hours}:${minutes}:00`;
-            } else {
-                // Default 2 hour duration
-                const tempStart = new Date(`${startDateTimeString}`);
-                const tempEnd = new Date(tempStart.getTime() + 2 * 60 * 60000);
-                const hours = tempEnd.getHours().toString().padStart(2, '0');
-                const minutes = tempEnd.getMinutes().toString().padStart(2, '0');
-                endDateTimeString = `${row.Date}T${hours}:${minutes}:00`;
-            }
+            const durationMinutes = runtimeMatch ? parseInt(runtimeMatch[1], 10) + 15 : 120;
+
+            // Done in plain minutes so a late show running past midnight rolls the
+            // date forward. Reusing row.Date for the end produced a timestamp
+            // earlier than the start, which the API rejects — and the calendar
+            // regularly carries 10:00 PM showtimes.
+            const [startHours, startMinutes] = row.Time.split(':').map(Number);
+            const endTotalMinutes = startHours * 60 + startMinutes + durationMinutes;
+            const endDate = addDaysToISODate(row.Date, Math.floor(endTotalMinutes / 1440));
+            const endHours = String(Math.floor((endTotalMinutes % 1440) / 60)).padStart(2, '0');
+            const endMinutes = String(endTotalMinutes % 60).padStart(2, '0');
+            const endDateTimeString = `${endDate}T${endHours}:${endMinutes}:00`;
 
             const key = `${row.Title}|${row.Date}|${row.Time}`;
             if (eventKeys.has(key)) duplicateEventFound = true;
@@ -203,14 +168,14 @@ async function connectToCalendar() {
         }
 
         if (duplicateEventFound) {
-            logger.warn('Duplicate events (by Title/Date/Time) found in schedule.csv.');
+            logger.warn('Duplicate events (by Title/Date/Time) found in the schedule sheet.');
         }
         if (allSkippedForMissingFields) {
             logger.warn('All events were skipped due to missing required fields.');
         }
 
         if (eventsToCreate.length === 0) {
-            logger.warn('No events to create after parsing schedule.csv. Exiting.');
+            logger.warn('No events to create after parsing the schedule sheet. Exiting.');
             return;
         }
 
@@ -256,7 +221,9 @@ async function connectToCalendar() {
                     )
                 ) {
                     console.log('[TROUBLESHOOT] Common authentication issues:');
-                    console.log('  - Ensure beacon-calendar-update.json is present and valid (download from Google Cloud Console).');
+                    console.log('  - GOOGLE_CLIENT_EMAIL and GOOGLE_PRIVATE_KEY must be set in your .env file');
+                    console.log('    (or in the Render dashboard). Credentials are read from the environment,');
+                    console.log('    not from a service account JSON file.');
                     console.log('  - CALENDAR_ID must be set in your .env file.');
                     console.log('  - Make sure your Google Service Account has adequate permissions to the specified Google Calendar.');
                 }

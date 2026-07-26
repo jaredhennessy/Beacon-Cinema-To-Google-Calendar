@@ -2,28 +2,28 @@
  * findRuntimes.js
  * Extracts runtime information for events listed in Google Sheet 'schedule' and updates Google Sheet 'runtimes'.
  * Usage: node findRuntimes.js
- * - Prompts to replace runtimes (5s timeout).
+ * - Prompts to replace runtimes (5s timeout, defaults to No). Answering Yes re-scrapes
+ *   every scheduled film instead of skipping the ones already recorded.
  * - Reads Google Sheet 'schedule' for unique event URLs.
  * - Skips titles already present in Google Sheet 'runtimes' with a non-empty Runtime.
  * - Uses Puppeteer to extract runtime info from each URL.
- * - Writes results to Google Sheet 'runtimes' (Title, Runtime).
- * - Ensures header row exists in Google Sheet 'runtimes'.
- * Dependencies: puppeteer, readline, ./sheetsUtils.js, ./utils.js
+ * - Merges newly scraped runtimes with the ones already in Google Sheet 'runtimes',
+ *   so previously recorded values are not lost. Fresh values win on conflict.
+ * Dependencies: ./puppeteerConfig.js, readline, ./sheetsUtils.js, ./utils.js,
+ *   ./logger.js, ./errorHandler.js
  */
 
 require('dotenv').config();
 
 // External dependencies
-const puppeteer = require('puppeteer');
 const { launchPuppeteerQuiet } = require('./puppeteerConfig');
-// Removed path dependency; now uses Google Sheets
 const { getSheetRows, setSheetRows } = require('./sheetsUtils');
 const readline = require('readline');
 
 // Internal dependencies
 const { deduplicateRows, navigateWithRetry } = require('./utils');
 const logger = require('./logger')('findRuntimes');
-const { setupErrorHandling, handleError } = require('./errorHandler');
+const { setupErrorHandling } = require('./errorHandler');
 
 setupErrorHandling(logger, 'findRuntimes.js');
 
@@ -69,8 +69,14 @@ setupErrorHandling(logger, 'findRuntimes.js');
         });
     });
 
-    // Collect processed titles from runtimes sheet
-    const processedTitles = new Set(runtimesRows.map(row => row.Title.trim()));
+    // Answering yes re-scrapes every film instead of skipping known ones.
+    // Previously this answer was computed and then never consulted.
+    const processedTitles = shouldReplaceRuntimes
+        ? new Set()
+        : new Set(runtimesRows.map(row => row.Title.trim()));
+    if (shouldReplaceRuntimes) {
+        logger.info('Replacing existing runtimes: every scheduled film will be re-scraped.');
+    }
 
     // Collect URLs and titles from schedule sheet, skipping already processed
     const urls = new Map();
@@ -122,16 +128,21 @@ setupErrorHandling(logger, 'findRuntimes.js');
                     results.push({ url, title, runtime: 'N/A' });
                     continue;
                 }
-                // Try to extract runtime from the page
-                // The logic below attempts to find an element with the text "runtime" and retrieves the text of its sibling element.
+                // Extract runtime from the film's detail page.
+                // Film pages render metadata as `.meta-field` blocks pairing a
+                // `.meta-label` with a `.meta-value`. The legacy fallback below
+                // scanned every element in the document for the text "runtime",
+                // which also matched any ancestor whose entire text was that word.
                 const runtime = await page.evaluate(() => {
-                    const runtimeElement = Array.from(document.querySelectorAll('*'))
-                        .find(el => el.textContent.trim().toLowerCase() === 'runtime');
-                    if (runtimeElement) {
-                        const nextParagraph = runtimeElement.nextElementSibling;
-                        return nextParagraph ? nextParagraph.textContent.trim() : null;
+                    for (const field of document.querySelectorAll('.meta-field')) {
+                        const label = field.querySelector('.meta-label')?.textContent.trim().toLowerCase();
+                        if (label === 'runtime') {
+                            return field.querySelector('.meta-value')?.textContent.trim() || null;
+                        }
                     }
-                    return null;
+                    const legacy = Array.from(document.querySelectorAll('p, dt, span, strong, h4, h5'))
+                        .find(el => el.textContent.trim().toLowerCase() === 'runtime');
+                    return legacy?.nextElementSibling?.textContent.trim() || null;
                 });
                 if (runtime) {
                     logger.info(`Found Runtime: ${runtime} for Title: ${title}`);
@@ -178,28 +189,32 @@ setupErrorHandling(logger, 'findRuntimes.js');
         if (browser) await browser.close();
     }
 
-    // Deduplicate results by Title
-    // This logic ensures that only unique titles are written to the CSV, avoiding duplicates.
+    // Deduplicate newly scraped results by Title.
     const uniqueResults = deduplicateRows(results, rec => rec.Title);
 
+    // Merge with what the sheet already holds. Writing only the new results would
+    // discard every previously recorded runtime, since the sheet is replaced wholesale
+    // and known titles are skipped above. Freshly scraped values win on conflict.
     const runtimesAdded = uniqueResults.length;
-    if (uniqueResults.length === 0) {
-        logger.warn('No unique runtimes to write. runtimes (Google Sheet) not updated.');
-        // Write header if sheet is empty
+    const merged = deduplicateRows(
+        [...uniqueResults, ...runtimesRows.map(row => ({ Title: row.Title, Runtime: row.Runtime }))],
+        rec => rec.Title.trim()
+    );
+
+    if (merged.length === 0) {
+        logger.warn('No runtimes to write. runtimes (Google Sheet) left unchanged.');
         if (!runtimesRowsRaw.length) {
             await setSheetRows('runtimes', [['Title', 'Runtime']]);
             logger.info('runtimes (Google Sheet) header written.');
         }
-        logger.info('No new runtimes were added to runtimes (Google Sheet).');
         logger.warn('No valid runtimes written for any event.');
     } else {
-        // Write unique runtimes to Google Sheet
         const sheetRows = [
             ['Title', 'Runtime'],
-            ...uniqueResults.map(event => [event.Title, event.Runtime])
+            ...merged.map(event => [event.Title, event.Runtime])
         ];
         await setSheetRows('runtimes', sheetRows);
-        logger.info(`Runtimes written to runtimes (Google Sheet) (${uniqueResults.length} new records).`);
+        logger.info(`Runtimes written to runtimes (Google Sheet): ${runtimesAdded} new, ${merged.length} total.`);
     }
     if (runtimesAdded === 0) {
         logger.info('No new runtimes found. Script completed successfully.');

@@ -2,13 +2,22 @@
 /**
  * beaconSeries.js
  * Scrapes series film titles from The Beacon Cinema website and updates Google Sheet 'series'.
+ * Usage: node beaconSeries.js
+ * - Reads Google Sheet 'seriesIndex' for the series pages to visit.
+ * - Scrapes the films listed on each page.
+ * - Replaces the rows for every scraped SeriesTag, so titles that are no longer listed
+ *   are dropped. Tags absent from 'seriesIndex' keep their existing rows untouched, and
+ *   a series that yields nothing keeps its rows rather than being emptied.
+ * - Preserves each title's original DateRecorded as a first-seen timestamp.
+ * - Writes the whole sheet once, at the end.
+ * Dependencies: ./puppeteerConfig.js, ./sheetsUtils.js, ./utils.js, ./logger.js,
+ *   ./errorHandler.js
  */
 
 require('dotenv').config();
 
 // @ts-check
 // External dependencies
-const puppeteer = require('puppeteer');
 const { launchPuppeteerQuiet } = require('./puppeteerConfig');
 const { getSheetRows, setSheetRows } = require('./sheetsUtils');
 
@@ -23,13 +32,32 @@ const { setupErrorHandling, handleError } = require('./errorHandler');
 setupErrorHandling(logger, 'beaconSeries.js');
 
 /**
- * Scrapes film titles from a series page
+ * Rewrites legacy series URLs onto their current paths.
+ * The site moved series and program pages out of /programs/entry/, which now only
+ * serves a 308 redirect. Rewriting up front keeps the logs honest about what was
+ * fetched and avoids depending on the redirect staying in place.
+ * @param {string} seriesUrl - URL from the seriesIndex sheet
+ * @returns {string} The URL to actually navigate to
+ */
+function normalizeSeriesUrl(seriesUrl) {
+    // Parameter validation
+    if (!seriesUrl || typeof seriesUrl !== 'string') {
+        throw new Error('normalizeSeriesUrl: seriesUrl must be a non-empty string');
+    }
+
+    return seriesUrl.trim().replace(
+        /^(https:\/\/thebeacon\.film)\/programs\/entry\//,
+        '$1/programs/'
+    );
+}
+
+/**
+ * Scrapes film titles from a series or program page
  * @param {string} seriesUrl - URL of the series page to scrape
  * @param {string} seriesTag - Tag identifying the series
- * @param {Array<{Title: string, SeriesTag: string, DateRecorded: string}>} existingRows - Existing series data to check for duplicates
- * @returns {Promise<SeriesRow[]>} Array of series records
+ * @returns {Promise<SeriesRow[]>} Every film listed on the page, as series records
  */
-async function executeScript(seriesUrl, seriesTag, existingRows) {
+async function executeScript(seriesUrl, seriesTag) {
     // Parameter validation
     if (!seriesUrl || typeof seriesUrl !== 'string') {
         throw new Error('executeScript: seriesUrl must be a non-empty string');
@@ -37,72 +65,86 @@ async function executeScript(seriesUrl, seriesTag, existingRows) {
     if (!seriesTag || typeof seriesTag !== 'string') {
         throw new Error('executeScript: seriesTag must be a non-empty string');
     }
-    if (!existingRows || !Array.isArray(existingRows)) {
-        throw new Error('executeScript: existingRows must be an array');
+
+    const targetUrl = normalizeSeriesUrl(seriesUrl);
+    if (targetUrl !== seriesUrl) {
+        logger.warn(`Rewrote legacy series URL to ${targetUrl}. Update seriesURL in the seriesIndex sheet.`);
     }
-    
+
     let browser;
     try {
         // Render.com: Use centralized Puppeteer configuration
         browser = await launchPuppeteerQuiet();
         const page = await browser.newPage();
-        
-        const navigationSuccess = await navigateWithRetry(page, seriesUrl, { logger });
-        if (!navigationSuccess) {
-            logger.error(`Failed to load ${seriesUrl} after retries`);
-            await browser.close();
+
+        const response = await navigateWithRetry(page, targetUrl, { logger });
+        if (!response) {
+            logger.error(`Failed to load ${targetUrl} after retries`);
             return [];
         }
 
-        // Extract titles from the page
+        // A missing page still renders HTML, so without this check the 404 body's
+        // headings get stored as film titles.
+        const status = typeof response.status === 'function' ? response.status() : 200;
+        if (status >= 400) {
+            logger.error(`${targetUrl} returned HTTP ${status}; skipping series '${seriesTag}'.`);
+            return [];
+        }
+
+        // Series and program pages list their films as `.film-title` inside
+        // `.film-list`. The previous `h1, h2, h3` sweep also picked up the page
+        // heading and the literal "Films in this Program" label, both of which
+        // ended up stored as film titles.
+        //
+        // A seriesIndex row may also point straight at a film page rather than a
+        // series page (the 'secret' blindfolded screenings do), which has no film
+        // list — fall back to that page's own title.
         const titles = await page.evaluate(() => {
-            const elements = document.querySelectorAll('h1, h2, h3');
-            return Array.from(elements).map(el => el.textContent?.trim()).filter(Boolean);
+            const scoped = document.querySelectorAll('.film-list .film-title');
+            const elements = scoped.length ? scoped : document.querySelectorAll('.film-title');
+            if (elements.length) {
+                return Array.from(elements).map(el => el.textContent?.trim()).filter(Boolean);
+            }
+            const ownTitle = document.querySelector('h1.movie-title')?.textContent?.trim();
+            return ownTitle ? [ownTitle] : [];
         });
 
-        await browser.close();
+        if (titles.length === 0) {
+            logger.warn(`No films found at ${targetUrl}. The website structure may have changed.`);
+            return [];
+        }
 
-        // Filter out titles that already exist for this specific series
-        const existingTitlesForSeries = new Set(
-            existingRows
-                .filter(row => row.SeriesTag === seriesTag)
-                .map(row => row.Title)
-        );
-        
-        const validTitles = titles.filter(title => 
-            title && 
-            title.trim().length > 0 && 
-            !existingTitlesForSeries.has(title)
-        );
-        
-        logger.info(`Extracted ${titles.length} total titles, ${validTitles.length} new titles for series '${seriesTag}'.`);
+        logger.info(`Extracted ${titles.length} films for series '${seriesTag}'.`);
 
-        return validTitles.map(title => ({
+        const recordedAt = new Date().toISOString();
+        return titles.map(title => ({
             Title: title,
             SeriesTag: seriesTag,
-            DateRecorded: new Date().toISOString()
+            DateRecorded: recordedAt
         }));
     } catch (error) {
-        handleError(logger, error instanceof Error ? error : new Error(String(error)), `Error scraping series at ${seriesUrl}`);
+        handleError(logger, error instanceof Error ? error : new Error(String(error)), `Error scraping series at ${targetUrl}`);
         return [];
+    } finally {
+        // Closed here so a mid-scrape failure cannot leak a Chrome process.
+        if (browser) await browser.close();
     }
 }
 
 /**
- * Process series rows and write to Google Sheet
+ * Scrapes every series and rewrites Google Sheet 'series' from the results.
+ *
+ * Each scraped SeriesTag has its rows replaced rather than appended to, which is
+ * the behaviour the README documents and what clears out titles the old selector
+ * captured by mistake. Tags absent from seriesIndex are preserved untouched, and a
+ * series that yields nothing keeps its existing rows instead of being wiped. All
+ * of it lands in a single write at the end rather than one write per series.
+ *
  * @param {Array<{seriesName: string, seriesURL: string, seriesTag: string}>} rows
  * @param {Array<{Title: string, SeriesTag: string, DateRecorded: string}>} existingRows
- * @param {Set<string>} allTitles
- * @returns {Promise<{ processedCount: number; skippedCount: number }>}
+ * @returns {Promise<{ processedCount: number; skippedCount: number }>} Counts of newly seen and already-known titles
  */
-/**
- * Process series rows and write to Google Sheet
- * @param {Array<{seriesName: string, seriesURL: string, seriesTag: string}>} rows
- * @param {Array<{Title: string, SeriesTag: string, DateRecorded: string}>} existingRows
- * @param {Set<string>} allTitles
- * @returns {Promise<{ processedCount: number; skippedCount: number }>}
- */
-async function processSeriesRows(rows, existingRows, allTitles) {
+async function processSeriesRows(rows, existingRows) {
     // Parameter validation
     if (!rows || !Array.isArray(rows)) {
         throw new Error('processSeriesRows: rows must be an array');
@@ -110,40 +152,66 @@ async function processSeriesRows(rows, existingRows, allTitles) {
     if (!existingRows || !Array.isArray(existingRows)) {
         throw new Error('processSeriesRows: existingRows must be an array');
     }
-    if (!allTitles || !(allTitles instanceof Set)) {
-        throw new Error('processSeriesRows: allTitles must be a Set');
-    }
-    
+
     let processedCount = 0;
     let skippedCount = 0;
     const totalRows = rows.length;
 
     try {
+        // Index what the sheet already holds so DateRecorded stays a first-seen
+        // timestamp instead of being reset on every run.
+        const knownByTag = new Map();
+        for (const row of existingRows) {
+            if (!row.Title || !row.SeriesTag) continue;
+            if (!knownByTag.has(row.SeriesTag)) knownByTag.set(row.SeriesTag, new Map());
+            knownByTag.get(row.SeriesTag).set(row.Title, row.DateRecorded);
+        }
+
+        const scrapedTags = new Set(rows.map(row => row.seriesTag));
+        const preservedRows = existingRows.filter(row =>
+            row.Title && row.SeriesTag && !scrapedTags.has(row.SeriesTag));
+
+        const finalRecords = [];
+
         for (let i = 0; i < rows.length; i++) {
             const row = rows[i];
             logger.info(`Processing ${i + 1}/${totalRows}: ${row.seriesName}`);
-            
-            const newRecords = await executeScript(row.seriesURL, row.seriesTag, existingRows);
-            processedCount += newRecords.length;
-            skippedCount += newRecords.filter(r => allTitles.has(r.Title)).length;
-            
-            // Add new titles to set to prevent duplicates
-            newRecords.forEach(record => allTitles.add(record.Title));
-            
-            // Update Google Sheet
-            if (newRecords.length > 0) {
-                let sheetRows = await getSheetRows('series');
-                if (!sheetRows.length || sheetRows[0][0] !== 'Title') {
-                    sheetRows = [['Title', 'SeriesTag', 'DateRecorded']];
+
+            const records = await executeScript(row.seriesURL, row.seriesTag);
+            const known = knownByTag.get(row.seriesTag) || new Map();
+
+            if (records.length === 0) {
+                logger.warn(`No films scraped for '${row.seriesTag}'; keeping its ${known.size} existing rows.`);
+                for (const [title, dateRecorded] of known) {
+                    finalRecords.push({ Title: title, SeriesTag: row.seriesTag, DateRecorded: dateRecorded || '' });
                 }
-                for (const rec of newRecords) {
-                    sheetRows.push([rec.Title, rec.SeriesTag, rec.DateRecorded]);
-                }
-                await setSheetRows('series', sheetRows);
+                logger.info(`Progress: ${i + 1}/${totalRows} complete. Found 0 films.`);
+                continue;
             }
-            
-            logger.info(`Progress: ${i + 1}/${totalRows} complete. Found ${newRecords.length} titles.`);
+
+            let newForSeries = 0;
+            for (const record of records) {
+                if (known.has(record.Title)) {
+                    skippedCount++;
+                    finalRecords.push({ ...record, DateRecorded: known.get(record.Title) || record.DateRecorded });
+                } else {
+                    newForSeries++;
+                    processedCount++;
+                    finalRecords.push(record);
+                }
+            }
+
+            logger.info(`Progress: ${i + 1}/${totalRows} complete. Found ${records.length} films (${newForSeries} new).`);
         }
+
+        const sheetRows = [
+            ['Title', 'SeriesTag', 'DateRecorded'],
+            ...preservedRows.map(row => [row.Title, row.SeriesTag, row.DateRecorded || '']),
+            ...deduplicateRows(finalRecords, record => `${record.SeriesTag}|${record.Title}`)
+                .map(record => [record.Title, record.SeriesTag, record.DateRecorded])
+        ];
+        await setSheetRows('series', sheetRows);
+        logger.info(`series (Google Sheet) rewritten with ${sheetRows.length - 1} rows.`);
 
         return { processedCount, skippedCount };
     } catch (error) {
@@ -185,9 +253,8 @@ async function processSeriesRows(rows, existingRows, allTitles) {
             SeriesTag: r[existingHeader.indexOf('SeriesTag')],
             DateRecorded: r[existingHeader.indexOf('DateRecorded')],
         })) : [];
-        const allTitles = new Set(existingRows.map(r => r.Title));
 
-        const result = await processSeriesRows(rows, existingRows, allTitles);
+        const result = await processSeriesRows(rows, existingRows);
         processedCount = result.processedCount;
         skippedCount = result.skippedCount;
 

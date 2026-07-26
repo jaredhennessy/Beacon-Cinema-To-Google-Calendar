@@ -3,27 +3,25 @@
  * Scrapes event data from The Beacon Film Calendar and updates Google Sheet 'schedule'.
  * Usage: node beaconSchedule.js
  * - Scrapes event titles, dates, times, and URLs from the calendar page.
+ * - Reconstructs each date/time: the page has no ISO datetimes and no year at all.
+ * - Excludes theater rentals, which are marked by CSS class rather than by title.
  * - Matches titles with SeriesTag from Google Sheet 'series'.
  * - Adds a DateRecorded timestamp to each record.
- * - Removes past screenings from Google Sheet 'schedule' before writing new data.
- * - Writes the updated schedule to Google Sheet 'schedule'.
- * - Ensures header rows in all Google Sheets.
- * Dependencies: puppeteer, readline, ./utils.js, ./sheetsUtils.js
+ * - Replaces Google Sheet 'schedule' with the scraped window, dropping past screenings.
+ *   The sheet is left untouched when nothing could be scraped.
+ * Dependencies: ./puppeteerConfig.js, ./sheetsUtils.js, ./utils.js, ./logger.js, ./errorHandler.js
  */
 
 require('dotenv').config();
 
 // External dependencies
-const puppeteer = require('puppeteer');
 const { launchPuppeteerQuiet } = require('./puppeteerConfig');
 const { getSheetRows, setSheetRows } = require('./sheetsUtils');
 
 // Internal dependencies
 const logger = require('./logger')('beaconSchedule');
-const { deduplicateRows, navigateWithRetry } = require('./utils');
-const { setupErrorHandling, handleError } = require('./errorHandler');
-
-// const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/opt/render/.cache/puppeteer/chrome/linux-135.0.7049.84/chrome-linux64/chrome';
+const { deduplicateRows, navigateWithRetry, parseCalendarDate, parseTime12h } = require('./utils');
+const { setupErrorHandling } = require('./errorHandler');
 
 setupErrorHandling(logger, 'beaconSchedule.js');
 
@@ -56,101 +54,95 @@ setupErrorHandling(logger, 'beaconSchedule.js');
             logger.error('Failed to load calendar page after retries');
             return;
         }
-        // Extract event titles from the page
-        const titles = await page.evaluate(() => {
-            const titleElements = document.querySelectorAll('section[itemprop="name"]');
-            const titles = Array.from(titleElements).map(el => el.textContent.trim());
-            return [...new Set(titles)];
-        });
-
-        if (!Array.isArray(titles) || titles.length === 0) {
-            logger.warn('No titles found on the calendar page. The website structure may have changed.');
-        }
-
-        const titleMap = new Map(
-            titles.map(title => [normalizeTitle(title), title.trim()])
-        );
-        titleMap.delete(normalizeTitle('RENT THE BEACON'));
-
-    const seriesRows = await getSheetRows('series');
-    const seriesMapFromSheet = new Map(seriesRows.map(([title, seriesTag]) => [normalizeTitle(title), seriesTag]));
 
         const seenPairs = new Set();
         for (const [title, seriesTag] of seriesRows) {
-            const key = `${title}|${seriesTag}`;
+            const key = `${normalizeTitle(title)}|${seriesTag}`;
             if (seenPairs.has(key)) {
-                logger.warn(`Duplicate Title/SeriesTag pair "${title}|${seriesTag}" found in series.csv.`);
+                logger.warn(`Duplicate Title/SeriesTag pair "${title}|${seriesTag}" found in the series sheet.`);
             }
             seenPairs.add(key);
         }
         const seriesMap = new Map(seriesRows.map(([title, seriesTag]) => [normalizeTitle(title), seriesTag]));
 
-        console.log('[INFO] Extracted titles:', Array.from(titleMap.values()));
-
-        // Scrape schedule data from the page
-        const schedule = await page.evaluate(() => {
-            const scheduleList = [];
-            const eventBlocks = document.querySelectorAll('section[itemprop="name"]');
-            if (eventBlocks.length === 0) {
-                logger.warn('No event blocks found. The website structure may have changed.');
-            }
-            eventBlocks.forEach(eventBlock => {
-                const title = eventBlock.textContent.trim();
-                const url = eventBlock.closest('a')?.href || '';
-                const timeElements = Array.from(eventBlock.parentElement.querySelectorAll('section.time[itemprop="startDate"]'));
-                timeElements.forEach(timeElement => {
-                    const startDate = timeElement.getAttribute('content');
-                    if (startDate) {
-                        const [date, time] = startDate.split('T');
-                        const formattedDate = date;
-                        const formattedTime = time.slice(0, 5);
-                        scheduleList.push({ title, date: formattedDate, time: formattedTime, url });
-                    }
+        // Scrape showtimes from the page.
+        //
+        // The site renders every showtime twice: once in the desktop `.cal-grid`
+        // and once in the mobile `.cal-list`. Both are always present in the HTML
+        // (a CSS media query hides one), so scraping generically would double
+        // every event. The list view is the better target because its parent day
+        // carries a complete "Saturday, July 25" label, whereas the grid only has
+        // a bare day number that has to be paired with the month heading.
+        //
+        // Note there is no ISO datetime anywhere on the page any more, and no year
+        // at all: dates and times are reconstructed in Node, below.
+        const rawEntries = await page.evaluate(() => {
+            const entries = [];
+            document.querySelectorAll('.cal-list .cal-list-day').forEach(day => {
+                const dayLabel = day.querySelector('.cal-list-date')?.textContent.trim() || '';
+                day.querySelectorAll('.cal-list-entry').forEach(entry => {
+                    const link = entry.querySelector('a.cal-list-movie');
+                    if (!link) return;
+                    entries.push({
+                        dayLabel,
+                        title: link.textContent.trim(),
+                        // `.href` resolves the relative /calendar/movie/<slug> path.
+                        url: link.href,
+                        timeText: entry.querySelector('.cal-list-time')?.textContent.trim() || '',
+                        // Theater rentals are marked by class; matching on the title
+                        // is unreliable because its casing changes between views.
+                        isRental: entry.classList.contains('cal-list-entry-rental'),
+                        // Stable Square catalog id, unique per showtime.
+                        catalogId: entry.querySelector('[data-catalog-id]')?.getAttribute('data-catalog-id') || ''
+                    });
                 });
             });
-            return scheduleList;
+            return entries;
         });
 
-        if (!Array.isArray(schedule) || schedule.length === 0) {
-            logger.warn('No schedule data found on the calendar page. The website structure may have changed.');
-            logger.info('No schedule data found on the calendar page.');
+        if (rawEntries.length === 0) {
+            logger.warn('No calendar entries found on the calendar page. The website structure may have changed.');
         }
 
-        const today = new Date().toISOString().split('T')[0];
-        // Read existing schedule from Google Sheet
-    const scheduleRows = await getSheetRows('schedule');
-    const scheduleHeader = scheduleRows[0] || [];
-    const validScheduleRows = scheduleRows.length > 1 ? scheduleRows.slice(1).filter(fields => fields[0] && fields[1]) : [];
+        const filmEntries = rawEntries.filter(entry => !entry.isRental);
+        logger.info(`Found ${rawEntries.length} calendar entries (${rawEntries.length - filmEntries.length} rentals excluded).`);
 
-        // Remove future screenings from schedule before writing new data
-        const filteredSchedule = validScheduleRows.filter(([title, date]) => date < today);
-
-        // Write filtered schedule back to Google Sheet
-        let filteredRows = [scheduleHeader];
-        for (const row of filteredSchedule) {
-            filteredRows.push(row);
+        // Rebuild each showtime into YYYY-MM-DD / HH:MM.
+        const referenceDate = new Date();
+        const schedule = [];
+        for (const entry of filmEntries) {
+            const date = entry.dayLabel ? parseCalendarDate(entry.dayLabel, referenceDate) : null;
+            const time = entry.timeText ? parseTime12h(entry.timeText) : null;
+            if (!entry.title || !date || !time) {
+                logger.warn(`Skipping entry with missing or unparseable fields: ${JSON.stringify(entry)}`);
+                continue;
+            }
+            schedule.push({
+                title: entry.title,
+                date,
+                time,
+                url: entry.url,
+                catalogId: entry.catalogId
+            });
         }
-        await setSheetRows('schedule', filteredRows);
-        logger.info('Removed future screenings from schedule (Google Sheet).');
+
+        if (schedule.length === 0) {
+            logger.warn('No schedule data could be parsed from the calendar page. The website structure may have changed.');
+        }
 
         const currentTimestamp = new Date().toISOString();
-        const scheduleWithSeriesTag = schedule
-            .filter(event => event.title !== 'RENT THE BEACON')
-            .filter(event => event.title && event.date && event.time)
-            .map(event => ({
-                ...event,
-                seriesTag: seriesMap.get(normalizeTitle(event.title)) || '',
-                dateRecorded: currentTimestamp,
-                url: event.url
-            }));
+        const scheduleWithSeriesTag = schedule.map(event => ({
+            ...event,
+            seriesTag: seriesMap.get(normalizeTitle(event.title)) || '',
+            dateRecorded: currentTimestamp
+        }));
 
-        if (scheduleWithSeriesTag.length === 0) {
-            logger.warn('All events were skipped due to missing required fields.');
-            logger.info('No valid events were written to schedule.csv.');
-        }
-
-        // Deduplicate events by title/date/time
-        const uniqueEvents = deduplicateRows(scheduleWithSeriesTag, event => `${event.title}|${event.date}|${event.time}`);
+        // Deduplicate by catalog id where the site provides one, since it identifies
+        // a showtime exactly; fall back to title/date/time otherwise.
+        const uniqueEvents = deduplicateRows(
+            scheduleWithSeriesTag,
+            event => event.catalogId || `${normalizeTitle(event.title)}|${event.date}|${event.time}`
+        );
         const duplicateWritten = uniqueEvents.length < scheduleWithSeriesTag.length;
 
         if (duplicateWritten) {
@@ -158,14 +150,16 @@ setupErrorHandling(logger, 'beaconSchedule.js');
         }
 
         if (uniqueEvents.length === 0) {
-            logger.warn('No unique events to write. schedule (Google Sheet) not updated.');
+            // Leaving the sheet untouched is deliberate: blanking it on a failed
+            // scrape would wipe the calendar on the next updateGCal run.
+            logger.warn('No unique events to write. schedule (Google Sheet) left unchanged.');
             logger.info('No new events were added to schedule (Google Sheet).');
         } else {
-            // Write unique events to Google Sheet
+            // Replaces the whole sheet, which drops past screenings as documented.
             const sheetRows = [
                 ['Title', 'Date', 'Time', 'URL', 'SeriesTag', 'DateRecorded'],
                 ...uniqueEvents.map(event => [
-                    titleMap.get(normalizeTitle(event.title)) || event.title,
+                    event.title,
                     event.date,
                     event.time,
                     event.url,
@@ -184,9 +178,6 @@ setupErrorHandling(logger, 'beaconSchedule.js');
             logger.error('An error occurred:', error.message);
             if (error.stack && !error.message.includes('ENOENT')) {
                 logger.error(error.stack);
-            }
-            if (error.message.includes('no such file or directory') && error.message.includes('series.csv')) {
-                logger.error('files/series.csv is missing. Please run beaconSeries.js first.');
             }
         } else {
             logger.error('An unknown error occurred:', error);

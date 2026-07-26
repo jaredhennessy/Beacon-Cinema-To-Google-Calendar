@@ -40,9 +40,14 @@ if (require.main === module) {
  * @throws {Error} If service account file is missing or invalid, with troubleshooting info
  */
 function getServiceAccountClient() {
-    // Load credentials from environment variables
+    // Load credentials from environment variables.
+    // Literal \n sequences are converted to real newlines, matching sheetsUtils.js.
+    // Without this the key works for Sheets but fails for Calendar whenever it reaches
+    // the environment un-escaped — which is the normal outcome of pasting it into the
+    // Render dashboard, or of single-quoting it in .env.
     const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
-    const privateKey = process.env.GOOGLE_PRIVATE_KEY;
+    const privateKey = process.env.GOOGLE_PRIVATE_KEY
+        && process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n');
 
     if (!clientEmail || !privateKey) {
         throw new Error(

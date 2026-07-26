@@ -1,0 +1,36 @@
+{
+  "minorWords": [
+    "a", "an", "and", "as", "at", "but", "by", "en", "for", "from", "if", "in",
+    "into", "nor", "of", "off", "on", "onto", "or", "over", "per", "so", "the",
+    "to", "up", "via", "vs", "w/", "with", "yet"
+  ],
+
+  "romanNumerals": [
+    "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X",
+    "XI", "XII", "XIII", "XIV", "XV", "XVI", "XVII", "XVIII", "XIX", "XX"
+  ],
+
+  "exactCase": {
+    "bbc": "BBC",
+    "cia": "CIA",
+    "dvd": "DVD",
+    "fbi": "FBI",
+    "iww": "IWW",
+    "mcpherson": "McPherson",
+    "mtv": "MTV",
+    "nasa": "NASA",
+    "nyc": "NYC",
+    "pbs": "PBS",
+    "siff": "SIFF",
+    "sov": "SOV",
+    "tv": "TV",
+    "ufo": "UFO",
+    "usa": "USA",
+    "vhs": "VHS",
+    "waisn": "WAISN",
+    "wr": "WR",
+    "wto": "WTO",
+    "wto/99": "WTO/99",
+    "xxx": "XXX"
+  }
+}
