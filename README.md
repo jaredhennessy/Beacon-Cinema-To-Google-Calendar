@@ -1,152 +1,357 @@
 # Beacon Cinema Calendar Sync
 
-Automates scraping [The Beacon Cinema](https://thebeacon.film/calendar) schedule and syncing it to Google Calendar, including runtime and film series details, using Google Sheets for data management.
+Automates scraping [The Beacon Cinema](https://thebeacon.film/calendar) schedule and
+syncing it to Google Calendar, including runtime and film series details, using Google
+Sheets for data management.
 
 ## Summary
 
-This project scrapes film series and schedule data from The Beacon Cinema, stores it in Google Sheets (`series`, `schedule`, `runtimes`), and syncs events to Google Calendar. It supports both CLI and web interface usage, and is optimized for deployment on Render.com.
+This project scrapes film series and schedule data from The Beacon Cinema, stores it in
+Google Sheets (`seriesIndex`, `series`, `schedule`, `runtimes`), and syncs events to
+Google Calendar. It supports both CLI and web interface usage, and is optimized for
+deployment on Render.com.
 
 ## Features
 
-- Film series management
-- Schedule extraction
+- Automatic discovery of newly listed film series
+- Schedule extraction, including date and time reconstruction
 - Runtime discovery
 - Google Calendar integration
-- Google Sheets integration (`series`, `schedule`, `runtimes`)
+- Google Sheets integration (`seriesIndex`, `series`, `schedule`, `runtimes`)
 - Automated execution (CLI and web interface)
-- Render.com ready (optimized Puppeteer config)
-- Minimal logging and comprehensive error handling
+- Render.com ready (centralized Puppeteer config)
+- Log rotation and comprehensive error handling
 - Data deduplication and parameter validation
 
-## Quick Start
+## Requirements
+
+- **Node.js 20 or newer.** This is what the dependencies need, not a preference: `glob`
+  requires `20 || >=22`, `puppeteer` and `express` require `>=18`, and
+  `fs.readdirSync(dir, { recursive: true })` needs 18.17+. On an older runtime,
+  `require('glob')` fails inside a `try/catch` in `getPuppeteerConfig()` that swallows the
+  error, so Chrome discovery quietly falls back instead of telling you what went wrong.
+- A Google Cloud service account with the Calendar API and Sheets API enabled
+- A Google Sheet and a Google Calendar, both shared with the service account
+
+## Installation
 
 ```bash
+git clone https://github.com/jaredhennessy/Beacon-Cinema-To-Google-Calendar.git
+cd Beacon-Cinema-To-Google-Calendar
 npm install
-# Copy and edit your .env file with credentials
-npm start              # Launch web interface
-# Or run the full pipeline:
-node fullUpdate.js
 ```
 
-## Environment Variables
+Puppeteer downloads Chrome during `npm install`. If it fails to launch later, see
+[PUPPETEER_RENDER_SETUP.md](PUPPETEER_RENDER_SETUP.md).
 
-Add these to your `.env` file:
+## Configuration
+
+### 1. Google Cloud setup
+
+1. In the Google Cloud Console, enable the **Calendar API** and the **Sheets API**.
+2. Create a service account and generate a JSON key.
+3. Copy the values from that key into your `.env` file (see below). Credentials are read
+   from environment variables — **no service account JSON file is read at runtime**.
+4. In the Google Calendar UI, share your target calendar with the service account email
+   as an editor.
+5. Share your Google Sheet with the same service account email as an editor.
+
+### 2. Environment variables
+
+Create a `.env` file in the project root. Every variable in this first block is
+**required** — `sheetsUtils.js` validates them at startup and exits if any are missing.
 
 ```bash
 GOOGLE_TYPE=service_account
 GOOGLE_PROJECT_ID=your-project-id
 GOOGLE_PRIVATE_KEY_ID=your-key-id
-GOOGLE_PRIVATE_KEY="your-private-key"
-GOOGLE_CLIENT_EMAIL=your-service-account-email
+GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+GOOGLE_CLIENT_EMAIL=your-service-account@your-project.iam.gserviceaccount.com
 GOOGLE_CLIENT_ID=your-client-id
 GOOGLE_AUTH_URI=https://accounts.google.com/o/oauth2/auth
 GOOGLE_TOKEN_URI=https://oauth2.googleapis.com/token
 GOOGLE_AUTH_PROVIDER_X509_CERT_URL=https://www.googleapis.com/oauth2/v1/certs
 GOOGLE_CLIENT_X509_CERT_URL=your-cert-url
-SPREADSHEET_ID=your-google-sheet-id
-CALENDAR_ID=your-calendar-id
-TIME_ZONE=America/Los_Angeles
+GOOGLE_UNIVERSE_DOMAIN=googleapis.com
 ```
 
-## Google Sheets Setup
+`GOOGLE_PRIVATE_KEY` must contain the `-----BEGIN PRIVATE KEY-----` header. Keep it on one
+line and wrap it in double quotes as shown; literal `\n` sequences are converted to real
+newlines, so a single-line key works in `.env` and in the Render dashboard alike.
+
+Also required by `updateGCal.js`, which exits if it is unset:
+
+```bash
+# The calendar to write to. Either the email-style ID or the long alphanumeric ID.
+# The service account must be an editor on this calendar.
+CALENDAR_ID=your_calendar_id@group.calendar.google.com
+```
+
+Optional:
+
+```bash
+# The Google Sheet to use. Taken from the sheet URL, between /d/ and /edit.
+# Falls back to a hardcoded ID in sheetsUtils.js when unset — set it explicitly
+# so you are never silently pointed at someone else's sheet.
+SPREADSHEET_ID=your_google_sheet_id
+
+# IANA timezone name for calendar events. Default: America/Los_Angeles
+TIME_ZONE=America/Los_Angeles
+
+# Web interface port. Default: 3000
+PORT=3000
+```
+
+See [Log configuration](#log-configuration) and [Deployment](#deployment-rendercom) for
+the remaining optional variables.
+
+### 3. Google Sheet structure
+
+The sheet must contain four tabs, named exactly as below. Column headers are read by
+name, so column order does not matter, but the headers must match.
+
+| Tab | Columns | Written by |
+| --- | --- | --- |
+| `seriesIndex` | `seriesName`, `seriesURL`, `seriesTag` | `discoverSeries.js` |
+| `series` | `Title`, `SeriesTag`, `DateRecorded` | `beaconSeries.js` |
+| `schedule` | `Title`, `Date`, `Time`, `URL`, `SeriesTag`, `DateRecorded` | `beaconSchedule.js` |
+| `runtimes` | `Title`, `Runtime` | `findRuntimes.js` |
+
+`seriesIndex` maps a series page to a short tag. `series` maps each film title to that
+tag, which is how `beaconSchedule.js` labels a screening, and how `updateGCal.js` looks
+up the series name to put in an event description.
 
 ## Script Overview
 
-| Script              | Purpose                                      |
-|---------------------|----------------------------------------------|
-| beaconSeries.js     | Scrape series info, update `series` tab      |
-| beaconSchedule.js   | Scrape schedule, update `schedule` tab       |
-| findRuntimes.js     | Find runtimes, update `runtimes` tab         |
-| updateGCal.js       | Sync schedule to Google Calendar             |
-| fullUpdate.js       | Run all steps above in sequence              |
-| clearLogs.js        | Empty all log files                          |
-| testPuppeteer.js    | Verify Puppeteer/Chrome setup                |
+| Script              | Purpose                                            |
+|---------------------|----------------------------------------------------|
+| discoverSeries.js   | Find newly listed series, update `seriesIndex` tab |
+| beaconSeries.js     | Scrape series films, update `series` tab           |
+| beaconSchedule.js   | Scrape schedule, update `schedule` tab             |
+| findRuntimes.js     | Find runtimes, update `runtimes` tab               |
+| updateGCal.js       | Sync schedule to Google Calendar                   |
+| fullUpdate.js       | Run all five steps above in sequence               |
+| webserver.js        | Web interface for running scripts and viewing logs |
+| logManager.js       | Log rotation, cleanup and compression              |
+| clearLogs.js        | Empty all log files                                |
+| testPuppeteer.js    | Verify Puppeteer/Chrome setup                      |
 
 ## Usage
 
-### CLI
+### Full pipeline (recommended)
 
 ```bash
 node fullUpdate.js
-# Or run scripts individually:
-node beaconSeries.js
-node beaconSchedule.js
-node findRuntimes.js
-node updateGCal.js
 ```
 
-### Web Interface
+Runs the complete pipeline without user prompts, which makes it suitable for automated
+execution:
+
+1. `discoverSeries.js` — adds newly listed series to `seriesIndex`.
+2. `beaconSeries.js` — scrapes each series page and updates `series`.
+3. `beaconSchedule.js` — scrapes the calendar and updates `schedule`.
+4. `findRuntimes.js` — extracts runtimes and updates `runtimes`.
+5. `updateGCal.js` — replaces upcoming Google Calendar events.
+
+Step 1 runs before step 2 so a newly discovered series is scraped on the same pass rather
+than a run later. A typical run takes about four minutes, most of it in steps 2 and 5.
+
+If any step fails, the failure is logged and the pipeline stops.
+
+### Web interface
 
 ```bash
 npm start
 # Open http://localhost:3000 in your browser
 ```
 
+`npm start` launches the web interface only — it does **not** run the pipeline. Use the
+buttons on the page, or `node fullUpdate.js`, to do that.
+
+### Individual scripts
+
+#### Series discovery
+
+```bash
+node discoverSeries.js
+```
+
+- Reads `/series` (all sections) and `/programs` (currently running only).
+- Appends entries not already in `seriesIndex`, matching on URL.
+- Leaves existing rows untouched, so hand-picked `seriesTag` values survive.
+- Derives the tag for a new row from the URL slug, suffixing it if that tag is already
+  taken by a different URL.
+- Idempotent: re-running adds nothing once the sheet is current.
+
+Only currently-running programs are taken from `/programs`, because its 40+ finished
+programs list films that are never on the current calendar — scraping them was measured
+to add nothing to tag coverage while costing several minutes per run. `/series` is small
+and curated, so all of it is read.
+
+#### Series details
+
+```bash
+node beaconSeries.js
+```
+
+- Scrapes the films listed on each series page in the `seriesIndex` tab.
+- Replaces the rows for each scraped `SeriesTag`, so titles no longer listed are dropped.
+- Tags absent from `seriesIndex` keep their existing rows, and a series that yields
+  nothing keeps its rows rather than being emptied.
+- Preserves each title's original `DateRecorded` as a first-seen timestamp.
+- Skips a page that returns an HTTP error rather than storing its headings as films.
+
+#### Schedule update
+
+```bash
+node beaconSchedule.js
+```
+
+- Scrapes the current calendar from the Beacon website.
+- Rebuilds each date and time, which the page does not provide directly — see
+  [Website structure dependencies](#website-structure-dependencies).
+- Excludes theater rentals.
+- Replaces the `schedule` tab with the scraped window, which drops past screenings.
+- Leaves the tab untouched if nothing could be scraped, so a failed scrape cannot blank
+  your calendar on the next `updateGCal.js` run.
+- Deduplicates screenings, preferring the site's per-showtime ticket ID as the key.
+
+#### Runtime information
+
+```bash
+node findRuntimes.js
+```
+
+- Prompts to replace existing runtimes, defaulting to No after 5 seconds. Answering Yes
+  re-scrapes every scheduled film instead of skipping the ones already recorded.
+- Extracts the runtime from each film's page.
+- Merges results with the runtimes already in the sheet, so previously recorded values
+  are kept. Freshly scraped values win on conflict.
+
+A film whose page lists no runtime is left out, and `updateGCal.js` falls back to a
+two-hour duration for it.
+
+#### Calendar sync
+
+```bash
+node updateGCal.js
+```
+
+- Reads `schedule`, `runtimes` and `seriesIndex`. It never writes to the sheet.
+- Skips rows dated before today, then deletes all upcoming events from your calendar.
+- Creates new events with:
+  - Title case formatting — see [Title formatting](#title-formatting)
+  - Runtime plus 15 minutes when known, otherwise a 2 hour default
+  - Series name, when the screening has a `SeriesTag`
+  - Venue location
+  - Film page URL
+- Uses a Google service account (no OAuth2 or browser authorization required).
+
+Only upcoming events are deleted, so past events created by earlier runs remain on the
+calendar as history.
+
+## Title formatting
+
+The site stores every title in capitals, so `titleCase.js` reconstructs the casing before
+events are created. Most of it is rule-based:
+
+| Input | Output | Rule |
+| --- | --- | --- |
+| `ONCE UPON A TIME IN THE WEST` | Once Upon a Time in the West | Minor words stay lowercase mid-title |
+| `TWIN PEAKS: FIRE WALK WITH ME` | Twin Peaks: Fire Walk with Me | …but are capitalized after a colon |
+| `FRIDAY THE 13TH` | Friday the 13th | Ordinals are always lowercase |
+| `THE THIRD-ANNUAL ALL-NIGHTER` | The Third-Annual All-Nighter | Each part of a hyphenated compound is capitalized |
+| `THE OUT-OF-TOWNERS` | The Out-of-Towners | …except a minor word inside one |
+| `VHS ÜBER ALLES` | VHS Über Alles | Accented initials are handled correctly |
+
+Three things cannot be derived from an all-caps source, so they are listed in
+[titleCasing.json](titleCasing.json):
+
+- **`minorWords`** — the articles, conjunctions and short prepositions above.
+- **`romanNumerals`** — `EXORCIST II` must not become "Exorcist Ii". An explicit list is
+  used rather than a pattern, because ordinary words such as `MIX`, `DID`, `LIVID` and
+  `CIVIL` are also valid roman numerals and a pattern would wreck them.
+- **`exactCase`** — acronyms and names, keyed in lowercase: `"vhs": "VHS"`,
+  `"mcpherson": "McPherson"`.
+
+**`exactCase` is the only list expected to grow.** When a new film's acronym comes out
+wrong, add one entry. Note that `la` and `us` are deliberately absent, because they are
+the French article and the English pronoun far more often than Los Angeles or the United
+States — adding them would corrupt titles like *À Nous La Liberté*.
+
+The vocabulary is a JSON file rather than a Google Sheet tab on purpose: it is
+presentation config rather than film data, it needs no network call at sync time (a failed
+Sheet read would silently degrade every title), and its history is reviewable in git.
+Editing it needs a commit and deploy; if you would rather change acronyms without one,
+moving `exactCase` into a Sheet tab is a small change to `titleCase.js`.
+
+**Run `npm test` after editing `titleCasing.json`.** The suite checks the vocabulary for
+lowercase keys and for words listed in both `minorWords` and `exactCase`, and it asserts
+that roman-numeral lookalikes such as *The Mix* and *A Civil Action* still come out as
+words. See [Tests](#tests).
+
+## Tests
+
+```bash
+npm test
+```
+
+Runs the unit suites in `test/`. They cover the two pure-logic modules whose failures are
+**silent** — the pipeline reports success while writing wrong data:
+
+| Suite | Covers | Why it matters |
+| --- | --- | --- |
+| `test/titleCase.test.js` | `titleCase.js` and the `titleCasing.json` vocabulary | A bad vocabulary edit corrupts every calendar title |
+| `test/utils.test.js` | `parseCalendarDate()`, `parseTime12h()`, `addDaysToISODate()` | A year-inference regression puts every event a year off |
+
+The suites are pure — no network, no Chrome, no Google APIs, no environment variables — so
+they run in about a second. `test/utils.test.js` includes a sweep of every date across three
+years at several reference offsets, which is the strongest guard on year inference, plus the
+end-time arithmetic for shows running past midnight.
+
+They use plain `assert` rather than a test framework, so there is no dependency to install
+and each file stays runnable on its own with `node test/<name>.test.js`.
+
+**Puppeteer is a separate, non-unit diagnostic.** It needs Chrome and internet access, so it
+is deliberately not part of `npm test`:
+
+```bash
+node testPuppeteer.js
+```
+
+That script reports the Node version and platform, dumps the `PUPPETEER_*` variables,
+inspects the Chrome cache directory before and after installation, prints the resolved
+launch config, and then launches twice — once verbose and once through
+`launchPuppeteerQuiet()`, the wrapper the scrapers actually use. Run it first when Puppeteer
+fails on Render.
+
 ## Deployment (Render.com)
 
-- See `render.yaml` and `PUPPETEER_RENDER_SETUP.md`
-- Set environment variables in Render.com dashboard
+- See [render.yaml](render.yaml) and [PUPPETEER_RENDER_SETUP.md](PUPPETEER_RENDER_SETUP.md).
+- **`render.yaml` does not declare the Google credential variables.** The 11 `GOOGLE_*`
+  variables plus `SPREADSHEET_ID` must be set in the Render dashboard, or the app exits
+  on startup.
+- Render runs in UTC. Date reconstruction is timezone-independent, but `updateGCal.js`
+  compares against UTC "today", so a late-evening Pacific run can treat the same
+  evening's screenings as already past.
+- The free plan has an ephemeral filesystem, so `logs/` does not survive a restart.
+
+### Puppeteer environment variables
+
+All optional. `render.yaml` already sets the first one.
+
+| Variable | Effect |
+| --- | --- |
+| `PUPPETEER_CACHE_DIR` | Where Chrome is installed and looked for. Defaults to `/opt/render/.cache/puppeteer` on Linux, or `.cache/puppeteer` under the project on Windows |
+| `PUPPETEER_VERBOSE` | Set to `true` to log the resolved launch config and Chrome discovery on every run, without editing code |
+| `PUPPETEER_EXECUTABLE_PATH` | Read by `testPuppeteer.js` when reporting the environment. `getPuppeteerConfig()` resolves the binary itself, so setting this does not override the launch path |
+| `RENDER` | Set by Render automatically. Its presence, or a Linux platform, switches on the Render-specific Chrome path search |
 
 ## Logging & Maintenance
 
-- Logs in `logs/` directory
-- Log management via CLI and web interface
+Logs are written to the `logs/` directory, one file per script:
 
-### Log Management Features
-
-**Automatic Log Rotation**:
-
-- Log files are automatically rotated when they exceed 10MB (configurable)
-- Keeps up to 5 rotated files per script (configurable)
-- Old files are automatically deleted after 30 days (configurable)
-
-**Manual Log Management**:
-
-```bash
-# View log statistics
-npm run log-stats
-
-# Rotate large log files
-npm run log-rotate
-
-# Clean up old log files  
-npm run log-cleanup
-
-# Full maintenance (rotate + cleanup + compress)
-npm run log-maintain
-```
-
-**Web Interface**: Log management is available in the web interface with dedicated buttons for statistics, rotation, cleanup, and maintenance.
-
-**Configuration**: Set environment variables to customize log behavior:
-
-- `MAX_LOG_SIZE_MB=10` - Size limit before rotation
-- `MAX_LOG_FILES=5` - Number of rotated files to keep
-- `LOG_RETENTION_DAYS=30` - Days to keep old log files
-- `COMPRESS_LOGS=true` - Enable compression of rotated logs (Linux only)
-
-### Logger Script Usage
-
-```javascript
-const logger = require('./logger')('scriptName');
-// ...existing code...
-```
-
-### Log File Location and Format
-
-### Google Sheets Issues
-
-- **Missing Tabs**: Ensure the Google Sheet has the required tabs (`seriesIndex`, `series`, `schedule`, `runtimes`).
-- **Permission Errors**: Verify that the service account email has been added as an editor to the Google Sheet.
-- **Invalid Sheet ID**: Check that the `SHEET_ID` in your `.env` file matches the ID of your Google Sheet.
-
-### Google Authentication Issues
-
-- **Calendar Permissions**: The service account email must be added as an editor to your Google Calendar.
-- **API Access**: Confirm the Google Calendar API and Sheets API are enabled for your Google Cloud project.
-
-Log files are written to the `logs/` directory with one file per script:
-
+- `discoverSeries.log`
 - `beaconSeries.log`
 - `beaconSchedule.log`
 - `findRuntimes.log`
@@ -154,195 +359,136 @@ Log files are written to the `logs/` directory with one file per script:
 - `utils.log`
 - `fullUpdate.log`
 
-Each script run starts with a session marker and entries have a consistent format:
+Each run starts with a session marker, and entries share a consistent format:
 
 ```log
 ================================================================================
-2025-08-18T21:58:38.424Z Session Start: beaconSeries
+2026-07-25T19:20:31.223Z Session Start: beaconSeries
 ================================================================================
-[2025-08-18T21:58:40.726Z] [INFO] Starting beaconSeries.js
-[2025-08-18T21:58:40.739Z] [INFO] Found 14 series in Google Sheets.
-[2025-08-18T21:58:41.191Z] [ERROR] Error scraping series: Connection failed
+[2026-07-25T19:20:31.244Z] [INFO] Starting beaconSeries.js
+[2026-07-25T19:20:31.750Z] [INFO] Found 20 series in Google Sheet 'seriesIndex'.
+[2026-07-25T19:20:32.191Z] [ERROR] Error scraping series: Connection failed
 Stack Trace:
 Error: Connection failed
-  at scrapeFilms (d:\code\jcal\beaconSeries.js:42:15)
+  at executeScript (/path/to/project/beaconSeries.js:98:15)
 ```
 
-### Logging System Features
+### Logging system features
 
-- **Timestamping**: All entries include ISO 8601 timestamps
-- **Session Markers**: Each script run is clearly delimited in the log file  
-- **Console Mirroring**: All logs are output to console with appropriate coloring
-- **Error Tracing**: Error logs automatically include stack traces when available
-- **Summary Statistics**: Scripts track and report processed/skipped/error counts
-- **Auto-Configuration**: Creates `logs/` directory if missing
-- **Parameter Validation**: All log methods validate input parameters
+- **Timestamping**: all entries include ISO 8601 timestamps
+- **Session markers**: each script run is clearly delimited in the log file
+- **Console mirroring**: all logs are output to console with appropriate coloring
+- **Error tracing**: error logs automatically include stack traces when available
+- **Summary statistics**: scripts track and report processed/skipped/error counts
+- **Auto-configuration**: creates `logs/` directory if missing
+- **Parameter validation**: all log methods validate input parameters
 
-## Google Sheets Integration
+### Using the logger in a script
 
-- All scripts interact with a shared Google Sheet for data storage and retrieval.
-- The sheet must have the following tabs:
-  - `Series`: Stores film series definitions.
-  - `Schedule`: Stores the current schedule of films (title, date, time, URL, series tag).
-  - `Runtimes`: Stores runtime information for each film.
+```javascript
+const logger = require('./logger')('scriptName');
+logger.info('Starting scriptName.js');
+logger.warn('Something looked wrong but is recoverable');
+logger.error('Something failed', error.message);
+logger.summary(processedCount, skippedCount, errorCount);
+```
 
-> **Note:** Ensure the Google Sheet is shared with the service account email.
+### Log management
 
-## Script Outputs
+Files are rotated automatically once they exceed the size limit. Rotation keeps a
+numbered set of old files per script and deletes files past the retention window.
 
-- `Series` tab: List of film titles and their associated series tags, updated by `beaconSeries.js`.
-- `Schedule` tab: The current schedule of films (title, date, time, URL, series tag), updated by `beaconSchedule.js`.
-- `Runtimes` tab: Runtime information for each film, updated by `findRuntimes.js`.
+```bash
+npm run log-stats      # View log statistics
+npm run log-rotate     # Rotate large log files
+npm run log-cleanup    # Delete log files past the retention window
+npm run log-maintain   # Rotate + cleanup + compress
+npm run clear-logs     # Empty all log files
+```
+
+The same operations are available as buttons in the web interface.
+
+### Log configuration
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `MAX_LOG_SIZE_MB` | `10` | Size in MB a file must exceed to be rotated |
+| `MAX_LOG_FILES` | `5` | Number of rotated files kept per script |
+| `LOG_RETENTION_DAYS` | `30` | Age in days after which rotated files are deleted |
+| `COMPRESS_LOGS` | unset | Set to `true` to gzip rotated logs. Skipped on Windows |
 
 ## Updating or Resetting Data
 
-- To reset runtimes, run `findRuntimes.js` and choose to replace the `Runtimes` tab when prompted.
-- To reset series data, edit or replace the `Series` tab and rerun `beaconSeries.js`.
-- To clear all Google Calendar events and resync, run `updateGCal.js` or the full pipeline.
-
-## Installation
-
-1. Clone the repository:
-
-    ```bash
-    git clone <repository_url>
-    cd jcal
-    ```
-
-2. Install dependencies:
-
-    ```bash
-    npm install
-    ```
-
-## Configuration
-
-1. **Google Cloud Project Setup**:
-    - Go to Google Cloud Console.
-    - Enable the Calendar API and Sheets API.
-    - Create a service account and download the JSON key as `beacon-calendar-update.json` to your project root.
-    - In the Google Calendar web UI, share your target calendar with the service account email (as an editor).
-    - Share your Google Sheet with the service account email (as an editor).
-
-2. **Environment Configuration**:
-    - Create a `.env` file in the project root with the following variables:
-
-        ```env
-        # Required: The ID of your target Google Calendar
-        # Get this from the calendar's settings in Google Calendar
-        # Format: either the email-style ID or the long alphanumeric ID
-        CALENDAR_ID=your_calendar_id@group.calendar.google.com
-
-        # Optional: The timezone for calendar events
-        # Default: America/Los_Angeles if not specified
-        # Format: IANA timezone name (e.g., Europe/London, Asia/Tokyo)
-        TIME_ZONE=America/Los_Angeles
-
-        # Required: The ID of your Google Sheet
-        # Get this from the URL of the sheet (e.g., the part after /d/ and before /edit)
-        SHEET_ID=your_google_sheet_id
-        ```
-
-        > **Important**: The `CALENDAR_ID` must be the calendar where your service account has been added as an editor.
-
-## Running the Scripts
-
-### Full Pipeline (Recommended)
-
-Run the complete update process using either:
-
-```bash
-npm start
-```
-
-or:
-
-```bash
-node fullUpdate.js
-```
-
-This script automatically executes the complete pipeline without user prompts, making it perfect for web deployments and automated execution:
-
-1. `beaconSeries.js` - Updates film series data from the `Series` tab in Google Sheets.
-2. `beaconSchedule.js` - Scrapes the current schedule and writes to the `Schedule` tab in Google Sheets.
-3. `findRuntimes.js` - Extracts runtime information for scheduled films and writes to the `Runtimes` tab in Google Sheets.
-4. `updateGCal.js` - Updates Google Calendar with the latest schedule.
-
-### Individual Scripts
-
-You can also run each script individually as needed:
-
-```bash
-node beaconSeries.js
-```
-
-- Scrapes film titles from each series page listed in the `Series` tab.
-- Updates the `Series` tab in Google Sheets.
-- Removes outdated entries for each SeriesTag before adding new ones.
-- Deduplicates titles and warns about duplicates.
-
-#### Schedule Update
-
-```bash
-node beaconSchedule.js
-```
-
-- Scrapes the current calendar from the Beacon website.
-- Updates the `Schedule` tab in Google Sheets.
-- Removes past screenings.
-- Deduplicates events and warns about duplicates.
-
-#### Runtime Information
-
-```bash
-node findRuntimes.js
-```
-
-- Prompts to replace or update the `Runtimes` tab (5s timeout).
-- Extracts runtime from each film's page.
-- Skips already processed films.
-- Deduplicates runtimes and warns about duplicates.
-
-#### Calendar Sync
-
-```bash
-node updateGCal.js
-```
-
-- Deletes all upcoming events from your Google Calendar.
-- Creates new events with:
-  - Proper title formatting
-  - Runtime information (adds 15 minutes to runtime if available, otherwise defaults to 2 hours)
-  - Series grouping (if available)
-  - Venue location
-  - Film page URL
-- Uses a Google service account for authentication (no OAuth2 or browser authorization required).
-- The service account email must be added as an editor to your target Google Calendar.
+- **Re-scrape all runtimes**: run `findRuntimes.js` and answer `Y` at the prompt.
+- **Rebuild a series**: `beaconSeries.js` already replaces the rows for every tag in
+  `seriesIndex` on each run, so simply rerun it.
+- **Drop a series entirely**: delete its row from `seriesIndex` *and* its rows from
+  `series`. Removing the `seriesIndex` row alone leaves the `series` rows in place by
+  design, so unrelated history is not lost.
+- **Rebuild the calendar**: run `updateGCal.js`, which deletes and recreates all
+  upcoming events.
 
 ## Troubleshooting
 
-### Authentication Issues
+### Website structure dependencies
 
-If you encounter authentication errors, verify the following:
+The Beacon's site is an Astro build with no schema.org microdata, so scraping depends
+entirely on CSS classes. If a script starts reporting zero results, check these first:
 
-- **Service Account File**: Ensure `beacon-calendar-update.json` is present and valid in your project root
-- **Calendar ID**: Verify `CALENDAR_ID` is set correctly in your `.env` file
-- **Google Sheet ID**: Verify `SHEET_ID` is set correctly in your `.env` file
-- **Calendar Permissions**: The service account email must be added as an editor to your Google Calendar
-- **Sheet Permissions**: The service account email must be added as an editor to your Google Sheet
-- **API Access**: Confirm the Google Calendar API and Sheets API are enabled for your Google Cloud project
-- **Credentials Format**: Check that the service account JSON contains `client_email` and `private_key` fields
+| Script | Depends on | Notes |
+| --- | --- | --- |
+| discoverSeries.js | `.listing-section`, `.section-heading-brush`, `a.card`, `.card-title` | Section headings are matched against `/now playing/i` to decide what is still running. |
+| beaconSeries.js | `.film-list .film-title`, falling back to `h1.movie-title` | Scope to `.film-title`; a broad `h1, h2, h3` query also captures the page heading and the "Films in this Program" label. The fallback covers a `seriesIndex` row pointing at a single film page. |
+| beaconSchedule.js | `.cal-list .cal-list-day`, `.cal-list-date`, `.cal-list-entry`, `a.cal-list-movie`, `.cal-list-time` | Every showtime is rendered **twice** (desktop `.cal-grid` and mobile `.cal-list`); scraping both doubles every event. Rentals are identified by the `cal-list-entry-rental` class, not by title, because title casing differs between the two views. |
+| findRuntimes.js | `.meta-field` pairing `.meta-label` with `.meta-value` | Runtime is rendered as e.g. `111 minutes`. |
 
-### File and Directory Issues
+The calendar carries **no year and no ISO datetime**. Day headings read
+`"Saturday, July 25"` and times read `"7:00 PM"`, so `parseCalendarDate()` and
+`parseTime12h()` in `utils.js` rebuild `YYYY-MM-DD` and `HH:MM`. The year is inferred
+from the current date and validated against the weekday in the label, which is what
+keeps a December-to-January render from landing a year early.
 
-- **Missing Directories**: The script will create the `logs` directory automatically
-- **Permission Errors**: Ensure the script has read/write access to the project directory
+Series and program pages moved out of `/programs/entry/`, which now only serves a 308
+redirect. `beaconSeries.js` rewrites those URLs automatically and logs a warning; update
+`seriesURL` in the `seriesIndex` tab to `/programs/<slug>` to silence it. Rows added by
+`discoverSeries.js` use current paths, so this only affects rows predating the move.
 
-### Runtime Issues
+A film with no series is expected to have an empty `SeriesTag` — one-off screenings make
+up most of any given month. Coverage only drops unexpectedly if `discoverSeries.js` stops
+finding entries, so check its log first when tags go missing.
 
-- **Node.js Version**: Scripts require Node.js 14+ and may not work with older versions
-- **Puppeteer/Chromium Issues**: If Puppeteer fails to launch, install missing system dependencies (see `PUPPETEER_RENDER_SETUP.md`)
-- **Network Timeouts**: The `navigateWithRetry()` utility handles most timeout issues automatically
+### Authentication issues
+
+- **Credentials**: all 11 `GOOGLE_*` variables must be set. Credentials come from the
+  environment; no service account JSON file is read at runtime.
+- **Private key format**: `GOOGLE_PRIVATE_KEY` must contain `-----BEGIN PRIVATE KEY-----`.
+- **Calendar ID**: verify `CALENDAR_ID` is set correctly in your `.env` file.
+- **Calendar permissions**: the service account email must be an editor on your calendar.
+- **Sheet permissions**: the service account email must be an editor on your sheet.
+- **API access**: confirm the Calendar API and Sheets API are enabled for your project.
+
+### Google Sheets issues
+
+- **Missing tabs**: ensure the sheet has `seriesIndex`, `series`, `schedule` and
+  `runtimes`, named exactly.
+- **Missing or renamed columns**: headers are matched by name. A renamed header reads as
+  empty rather than failing loudly.
+- **Wrong sheet**: check `SPREADSHEET_ID`. When unset, a hardcoded fallback ID is used.
+- **Permission errors**: verify the service account email is an editor on the sheet.
+
+### File and directory issues
+
+- **Missing directories**: the `logs` directory is created automatically.
+- **Permission errors**: ensure the scripts can read and write the project directory.
+
+### Runtime issues
+
+- **Node.js version**: Node.js 20 or newer is required — see
+  [Requirements](#requirements). `fullUpdate.js` checks this and exits early.
+- **Puppeteer/Chromium**: if Puppeteer fails to launch, install the missing system
+  dependencies — see [PUPPETEER_RENDER_SETUP.md](PUPPETEER_RENDER_SETUP.md) — or run
+  `node testPuppeteer.js` to check the setup.
+- **Network timeouts**: `navigateWithRetry()` in `utils.js` retries twice before failing.
 
 ## License
 
