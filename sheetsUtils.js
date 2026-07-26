@@ -4,7 +4,6 @@
 
 const { google } = require('googleapis');
 const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
-const SPREADSHEET_ID = process.env.SPREADSHEET_ID || '1u10KqtqaDG3LhVAgSY5HCrepjQ_ePUGgeWjSuVCxXyE';
 
 // Validate required .env variables for service account
 function validateEnvVars() {
@@ -29,9 +28,23 @@ function validateEnvVars() {
   if (!process.env.GOOGLE_PRIVATE_KEY.includes('-----BEGIN PRIVATE KEY-----')) {
     throw new Error('GOOGLE_PRIVATE_KEY in .env is missing BEGIN PRIVATE KEY header or is not properly formatted.');
   }
+  // Checked separately from the service account block: this identifies which sheet to
+  // use, not who is using it, so a missing value deserves its own message. There is no
+  // default — pointing at some other sheet on a typo is worse than refusing to start.
+  if (!process.env.SPREADSHEET_ID || process.env.SPREADSHEET_ID.trim() === '') {
+    throw new Error(
+      'SPREADSHEET_ID is not set. Take it from your Google Sheet URL, the part between ' +
+      '/d/ and /edit, and set it in .env (or in the Render dashboard).'
+    );
+  }
 }
 
 validateEnvVars();
+
+// Read only after validation, so this is never undefined. Trimmed because a trailing
+// space survives a copy-paste into .env and would otherwise surface as a puzzling 404
+// from the Sheets API rather than as a configuration problem.
+const SPREADSHEET_ID = process.env.SPREADSHEET_ID.trim();
 
 // Load service account credentials from environment variables
 const credentials = {

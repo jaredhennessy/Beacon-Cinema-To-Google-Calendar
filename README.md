@@ -79,22 +79,34 @@ GOOGLE_UNIVERSE_DOMAIN=googleapis.com
 line and wrap it in double quotes as shown; literal `\n` sequences are converted to real
 newlines, so a single-line key works in `.env` and in the Render dashboard alike.
 
-Also required by `updateGCal.js`, which exits if it is unset:
+Also required, identifying which sheet and calendar to use:
 
 ```bash
+# The Google Sheet to read and write. There is no default: the scripts refuse to
+# start without it, rather than risk operating on the wrong sheet.
+SPREADSHEET_ID=your_google_sheet_id
+
 # The calendar to write to. Either the email-style ID or the long alphanumeric ID.
 # The service account must be an editor on this calendar.
 CALENDAR_ID=your_calendar_id@group.calendar.google.com
 ```
 
+**Finding `SPREADSHEET_ID`:** open the sheet in a browser and copy the segment of the URL
+between `/d/` and `/edit`.
+
+```text
+https://docs.google.com/spreadsheets/d/1AbC...XyZ/edit#gid=0
+                                       ^^^^^^^^^^^ this is SPREADSHEET_ID
+```
+
+It is an identifier, not a secret — but it does name your data, so treat it the way you
+would any other environment value and keep it out of version control. Trailing whitespace
+is trimmed, because a stray space from a copy-paste would otherwise surface as an
+unexplained 404 from the Sheets API.
+
 Optional:
 
 ```bash
-# The Google Sheet to use. Taken from the sheet URL, between /d/ and /edit.
-# Falls back to a hardcoded ID in sheetsUtils.js when unset — set it explicitly
-# so you are never silently pointed at someone else's sheet.
-SPREADSHEET_ID=your_google_sheet_id
-
 # IANA timezone name for calendar events. Default: America/Los_Angeles
 TIME_ZONE=America/Los_Angeles
 
@@ -328,9 +340,11 @@ fails on Render.
 ## Deployment (Render.com)
 
 - See [render.yaml](render.yaml) and [PUPPETEER_RENDER_SETUP.md](PUPPETEER_RENDER_SETUP.md).
-- **`render.yaml` does not declare the Google credential variables.** The 11 `GOOGLE_*`
-  variables plus `SPREADSHEET_ID` must be set in the Render dashboard, or the app exits
-  on startup.
+- **`render.yaml` does not declare the Google credential variables.** All 11 `GOOGLE_*`
+  variables must be set in the Render dashboard, or the app exits on startup.
+  `SPREADSHEET_ID`, `CALENDAR_ID` and `TIME_ZONE` are declared in `render.yaml` with
+  `sync: false`, meaning Render prompts for their values rather than storing them in the
+  repo — they still have to be filled in on the dashboard.
 - Render runs in UTC. Date reconstruction is timezone-independent, but `updateGCal.js`
   compares against UTC "today", so a late-evening Pacific run can treat the same
   evening's screenings as already past.
@@ -459,8 +473,9 @@ finding entries, so check its log first when tags go missing.
 
 ### Authentication issues
 
-- **Credentials**: all 11 `GOOGLE_*` variables must be set. Credentials come from the
-  environment; no service account JSON file is read at runtime.
+- **Credentials**: all 11 `GOOGLE_*` variables must be set, plus `SPREADSHEET_ID`.
+  `sheetsUtils.js` checks them at startup and names whichever are missing. Credentials come
+  from the environment; no service account JSON file is read at runtime.
 - **Private key format**: `GOOGLE_PRIVATE_KEY` must contain `-----BEGIN PRIVATE KEY-----`.
 - **Calendar ID**: verify `CALENDAR_ID` is set correctly in your `.env` file.
 - **Calendar permissions**: the service account email must be an editor on your calendar.
@@ -473,7 +488,10 @@ finding entries, so check its log first when tags go missing.
   `runtimes`, named exactly.
 - **Missing or renamed columns**: headers are matched by name. A renamed header reads as
   empty rather than failing loudly.
-- **Wrong sheet**: check `SPREADSHEET_ID`. When unset, a hardcoded fallback ID is used.
+- **Wrong sheet**: check `SPREADSHEET_ID`. There is no default, so an unset value stops the
+  scripts with a clear message rather than silently using another sheet. A `404` from the
+  Sheets API usually means the ID is wrong; a `403` means the service account is not an
+  editor on it.
 - **Permission errors**: verify the service account email is an editor on the sheet.
 
 ### File and directory issues
