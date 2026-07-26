@@ -14,6 +14,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const scripts = [
   'fullUpdate.js',
+  'discoverSeries.js',
   'beaconSeries.js',
   'beaconSchedule.js',
   'findRuntimes.js',

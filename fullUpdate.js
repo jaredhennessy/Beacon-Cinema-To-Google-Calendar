@@ -1,10 +1,11 @@
 /**
  * fullUpdate.js
  * Runs the full Beacon Cinema to Google Calendar update pipeline automatically:
- * 1. beaconSeries.js   - Updates series information in Google Sheet 'series'.
- * 2. beaconSchedule.js - Scrapes the schedule and updates Google Sheet 'schedule'.
- * 3. findRuntimes.js   - Extracts runtimes and updates Google Sheet 'runtimes'.
- * 4. updateGCal.js     - Updates Google Calendar with the latest schedule from Google Sheets.
+ * 1. discoverSeries.js - Adds newly listed series to Google Sheet 'seriesIndex'.
+ * 2. beaconSeries.js   - Updates series information in Google Sheet 'series'.
+ * 3. beaconSchedule.js - Scrapes the schedule and updates Google Sheet 'schedule'.
+ * 4. findRuntimes.js   - Extracts runtimes and updates Google Sheet 'runtimes'.
+ * 5. updateGCal.js     - Updates Google Calendar with the latest schedule from Google Sheets.
  * Usage: node fullUpdate.js
  * Each step is executed sequentially without user prompts. If any step fails, the script logs the error and exits.
  * Ensures header rows in all output Google Sheets after each step.
@@ -23,8 +24,13 @@ const { setupErrorHandling, handleError } = require('./errorHandler');
 
 setupErrorHandling(logger, 'fullUpdate.js');
 
-// Node.js version check
-const minNodeVersion = 14;
+// Node.js version check.
+// 20 is what the dependencies actually need: glob requires "20 || >=22", puppeteer and
+// express require >=18, and fs.readdirSync(dir, { recursive: true }) in puppeteerConfig.js
+// needs 18.17+. Gating lower than this is worse than useless, because require('glob')
+// failing on an older runtime is swallowed by a try/catch in getPuppeteerConfig() and
+// Chrome discovery silently falls back instead of reporting the real problem.
+const minNodeVersion = 20;
 const nodeMajor = parseInt(process.versions.node.split('.')[0], 10);
 if (nodeMajor < minNodeVersion) {
     logger.error(`Node.js version ${minNodeVersion}+ required. Detected: ${process.versions.node}`);
@@ -61,6 +67,7 @@ function runScript(script, label, stepNum) {
 function checkRequiredFiles() {
     // Check for script files
     const requiredScripts = [
+        'discoverSeries.js',
         'beaconSeries.js',
         'beaconSchedule.js',
         'findRuntimes.js',
@@ -95,16 +102,21 @@ function checkStepOutput(sheetName, label) {
         logger.info('Starting fullUpdate.js');
         checkRequiredFiles();
 
-        runScript('beaconSeries.js', 'beaconSeries.js', 1);
+        // Runs before beaconSeries.js so a newly listed series is scraped on the
+        // same pass it is discovered, rather than a run later.
+        runScript('discoverSeries.js', 'discoverSeries.js', 1);
+        checkStepOutput('seriesIndex', 'discoverSeries.js');
+
+        runScript('beaconSeries.js', 'beaconSeries.js', 2);
         checkStepOutput('series', 'beaconSeries.js');
 
-        runScript('beaconSchedule.js', 'beaconSchedule.js', 2);
+        runScript('beaconSchedule.js', 'beaconSchedule.js', 3);
         checkStepOutput('schedule', 'beaconSchedule.js');
 
-        runScript('findRuntimes.js', 'findRuntimes.js', 3);
+        runScript('findRuntimes.js', 'findRuntimes.js', 4);
         checkStepOutput('runtimes', 'findRuntimes.js');
 
-        runScript('updateGCal.js', 'updateGCal.js', 4);
+        runScript('updateGCal.js', 'updateGCal.js', 5);
 
         logger.info('fullUpdate.js completed all steps.');
     } catch (err) {
