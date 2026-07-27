@@ -7,6 +7,12 @@
     body { font-family: Arial, sans-serif; margin: 2em; }
     button { margin: 0.5em; padding: 0.5em 1em; }
     #log { background: #222; color: #eee; padding: 1em; height: 400px; overflow-y: auto; white-space: pre-wrap; border-radius: 6px; }
+    /* Updated by a timer rather than by received data, so it keeps moving even when the
+       stream goes quiet. A stalled run and a stalled connection read differently here. */
+    .status { font-family: monospace; font-size: 0.9em; color: #555; min-height: 1.4em; margin: 0.3em 0; }
+    .status-quiet { color: #8a6d00; }
+    .status-warn { color: #b00020; font-weight: bold; }
+    .status-done { color: #0a6b2d; }
   </style>
 </head>
 <body>
@@ -28,6 +34,7 @@
     <button onclick="runLogCommand('maintain')">⚙️ Full Maintenance</button>
   </div>
   <h2>Live Log Output</h2>
+  <div id="status" class="status"></div>
   <div id="log">(Log output will appear here)</div>
   <script src="app.js"></script>
 </body>

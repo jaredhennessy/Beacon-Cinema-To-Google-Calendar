@@ -189,6 +189,33 @@ npm start
 `npm start` launches the web interface only — it does **not** run the pipeline. Use the
 buttons on the page, or `node fullUpdate.js`, to do that.
 
+**Only one run at a time.** Starting a second while one is active returns 409 rather than
+launching it, because two pipelines mean two Chrome instances and that is what exhausts a small
+instance. Closing the tab does not cancel a run: `updateGCal.js` deletes every upcoming event
+before recreating them, so aborting midway would leave the calendar half rebuilt.
+
+### Reading the status line
+
+Output streams as Server-Sent Events. `text/event-stream` is used rather than plain text
+because it carries do-not-buffer semantics that reverse proxies honour — with plain text,
+Render's proxy held everything back until a run finished, making a slow step
+indistinguishable from a hang.
+
+Above the log is a status line updated by a **timer rather than by received data**, so it keeps
+moving even when nothing arrives. That is what separates the failure modes:
+
+| Status | Meaning |
+| --- | --- |
+| `running \| 01:24 elapsed \| last output 3s ago` | Normal. |
+| `... last output 45s ago, server still responding` | A step is slow but alive — keepalives are arriving. Expect this during `updateGCal.js`. |
+| `... nothing from the server for 30s` (red) | No data *and* no keepalive. The connection is being buffered, or the app is down. |
+| `connection lost` (red) | The stream broke. The run itself may still be finishing server-side. |
+| `finished \| 02:29 total` (green) | The run ended; the log's last line carries the exit code. |
+
+The server sends a keepalive every 10 seconds, so "nothing from the server" means more than two
+were missed. A step killed by the host reports the signal — `killed by SIGKILL` almost always
+means memory, see [Memory on small instances](#memory-on-small-instances).
+
 ### Individual scripts
 
 #### Series discovery
