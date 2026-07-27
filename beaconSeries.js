@@ -31,6 +31,22 @@ const { setupErrorHandling, handleError } = require('./errorHandler');
 
 setupErrorHandling(logger, 'beaconSeries.js');
 
+// How many series to scrape before restarting Chrome. Override with SERIES_PER_BROWSER to
+// trade speed for a lower memory ceiling without editing code — useful on a small instance.
+//
+// Chrome is launched with --single-process, so a closed page's memory stays in the browser
+// process instead of being reclaimed when a renderer exits. Measured across 20 series:
+//
+//   per-series launch   20 startups   150 s   peak 278 MB
+//   one browser          1 startup     33 s   peak 435 MB   (climbs ~13 MB per series)
+//   recycle every 5      4 startups    46 s   peak 307 MB   (sawtooth, memory reclaimed)
+//
+// 278 MB is roughly the floor for one Chrome plus one page, so recycling lands within 10% of
+// it while cutting runtime to a third. It also matters that each restart briefly holds two
+// Chrome processes: 4 startups means 3 such windows instead of 19, which is what exhausted a
+// 512 MB Render instance.
+const SERIES_PER_BROWSER = Math.max(1, parseInt(process.env.SERIES_PER_BROWSER, 10) || 5);
+
 /**
  * Rewrites legacy series URLs onto their current paths.
  * The site moved series and program pages out of /programs/entry/, which now only
@@ -52,13 +68,24 @@ function normalizeSeriesUrl(seriesUrl) {
 }
 
 /**
- * Scrapes film titles from a series or program page
+ * Scrapes film titles from a series or program page.
+ *
+ * Takes an already-running browser rather than launching its own. Launching per series
+ * meant one Chrome process per seriesIndex row — 20 launch/teardown cycles on a typical
+ * run — which exhausted the memory on a small Render instance and accounted for most of
+ * the step's runtime. A page is opened and closed per series so pages cannot accumulate
+ * across navigations, matching how findRuntimes.js iterates.
+ *
+ * @param {Object} browser - Puppeteer browser shared across all series
  * @param {string} seriesUrl - URL of the series page to scrape
  * @param {string} seriesTag - Tag identifying the series
  * @returns {Promise<SeriesRow[]>} Every film listed on the page, as series records
  */
-async function executeScript(seriesUrl, seriesTag) {
+async function executeScript(browser, seriesUrl, seriesTag) {
     // Parameter validation
+    if (!browser || typeof browser !== 'object') {
+        throw new Error('executeScript: browser must be a Puppeteer browser instance');
+    }
     if (!seriesUrl || typeof seriesUrl !== 'string') {
         throw new Error('executeScript: seriesUrl must be a non-empty string');
     }
@@ -71,11 +98,9 @@ async function executeScript(seriesUrl, seriesTag) {
         logger.warn(`Rewrote legacy series URL to ${targetUrl}. Update seriesURL in the seriesIndex sheet.`);
     }
 
-    let browser;
+    let page;
     try {
-        // Render.com: Use centralized Puppeteer configuration
-        browser = await launchPuppeteerQuiet();
-        const page = await browser.newPage();
+        page = await browser.newPage();
 
         const response = await navigateWithRetry(page, targetUrl, { logger });
         if (!response) {
@@ -126,8 +151,8 @@ async function executeScript(seriesUrl, seriesTag) {
         handleError(logger, error instanceof Error ? error : new Error(String(error)), `Error scraping series at ${targetUrl}`);
         return [];
     } finally {
-        // Closed here so a mid-scrape failure cannot leak a Chrome process.
-        if (browser) await browser.close();
+        // Closed here so a mid-scrape failure cannot leak a page for the rest of the run.
+        if (page) await page.close();
     }
 }
 
@@ -139,6 +164,9 @@ async function executeScript(seriesUrl, seriesTag) {
  * captured by mistake. Tags absent from seriesIndex are preserved untouched, and a
  * series that yields nothing keeps its existing rows instead of being wiped. All
  * of it lands in a single write at the end rather than one write per series.
+ *
+ * Owns the single Puppeteer browser for the whole run and closes it as soon as scraping
+ * finishes, so Chrome is not still resident while the sheet is written.
  *
  * @param {Array<{seriesName: string, seriesURL: string, seriesTag: string}>} rows
  * @param {Array<{Title: string, SeriesTag: string, DateRecorded: string}>} existingRows
@@ -173,35 +201,51 @@ async function processSeriesRows(rows, existingRows) {
 
         const finalRecords = [];
 
-        for (let i = 0; i < rows.length; i++) {
-            const row = rows[i];
-            logger.info(`Processing ${i + 1}/${totalRows}: ${row.seriesName}`);
-
-            const records = await executeScript(row.seriesURL, row.seriesTag);
-            const known = knownByTag.get(row.seriesTag) || new Map();
-
-            if (records.length === 0) {
-                logger.warn(`No films scraped for '${row.seriesTag}'; keeping its ${known.size} existing rows.`);
-                for (const [title, dateRecorded] of known) {
-                    finalRecords.push({ Title: title, SeriesTag: row.seriesTag, DateRecorded: dateRecorded || '' });
+        // One browser shared across a batch of series, recycled between batches to keep
+        // Chrome's memory from accumulating. See SERIES_PER_BROWSER.
+        let browser;
+        try {
+            for (let i = 0; i < rows.length; i++) {
+                if (i % SERIES_PER_BROWSER === 0) {
+                    if (browser) {
+                        await browser.close();
+                        logger.info(`Restarting Chrome after ${SERIES_PER_BROWSER} series to release memory.`);
+                    }
+                    browser = await launchPuppeteerQuiet();
                 }
-                logger.info(`Progress: ${i + 1}/${totalRows} complete. Found 0 films.`);
-                continue;
-            }
 
-            let newForSeries = 0;
-            for (const record of records) {
-                if (known.has(record.Title)) {
-                    skippedCount++;
-                    finalRecords.push({ ...record, DateRecorded: known.get(record.Title) || record.DateRecorded });
-                } else {
-                    newForSeries++;
-                    processedCount++;
-                    finalRecords.push(record);
+                const row = rows[i];
+                logger.info(`Processing ${i + 1}/${totalRows}: ${row.seriesName}`);
+
+                const records = await executeScript(browser, row.seriesURL, row.seriesTag);
+                const known = knownByTag.get(row.seriesTag) || new Map();
+
+                if (records.length === 0) {
+                    logger.warn(`No films scraped for '${row.seriesTag}'; keeping its ${known.size} existing rows.`);
+                    for (const [title, dateRecorded] of known) {
+                        finalRecords.push({ Title: title, SeriesTag: row.seriesTag, DateRecorded: dateRecorded || '' });
+                    }
+                    logger.info(`Progress: ${i + 1}/${totalRows} complete. Found 0 films.`);
+                    continue;
                 }
-            }
 
-            logger.info(`Progress: ${i + 1}/${totalRows} complete. Found ${records.length} films (${newForSeries} new).`);
+                let newForSeries = 0;
+                for (const record of records) {
+                    if (known.has(record.Title)) {
+                        skippedCount++;
+                        finalRecords.push({ ...record, DateRecorded: known.get(record.Title) || record.DateRecorded });
+                    } else {
+                        newForSeries++;
+                        processedCount++;
+                        finalRecords.push(record);
+                    }
+                }
+
+                logger.info(`Progress: ${i + 1}/${totalRows} complete. Found ${records.length} films (${newForSeries} new).`);
+            }
+        } finally {
+            // Released before the sheet write so Chrome is not held open for it.
+            if (browser) await browser.close();
         }
 
         const sheetRows = [

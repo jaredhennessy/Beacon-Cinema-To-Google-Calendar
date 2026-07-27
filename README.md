@@ -221,6 +221,8 @@ node beaconSeries.js
   nothing keeps its rows rather than being emptied.
 - Preserves each title's original `DateRecorded` as a first-seen timestamp.
 - Skips a page that returns an HTTP error rather than storing its headings as films.
+- Shares one Chrome across a batch of series and restarts it periodically, which keeps both
+  runtime and peak memory down — see [Memory on small instances](#memory-on-small-instances).
 
 #### Schedule update
 
@@ -363,6 +365,36 @@ fails on Render.
   compares against UTC "today", so a late-evening Pacific run can treat the same
   evening's screenings as already past.
 - The free plan has an ephemeral filesystem, so `logs/` does not survive a restart.
+
+### Memory on small instances
+
+Render's free instance has 512 MB, and Chrome is the bulk of it. `beaconSeries.js` visits one
+page per series, so how it manages Chrome dominates both memory and runtime. Measured over 20
+series:
+
+| Strategy | Chrome startups | Runtime | Peak Chrome |
+| --- | --- | --- | --- |
+| Launch per series | 20 | 150 s | 278 MB |
+| One browser for all | 1 | 33 s | 435 MB, climbing ~13 MB per series |
+| **Recycle every 5 (current)** | **4** | **46 s** | **307 MB, sawtooth** |
+
+One long-lived browser is the trap: Chrome runs with `--single-process`, so a closed page's
+memory stays in the browser process rather than being reclaimed when a renderer exits.
+Restarting periodically bounds it. Roughly 278 MB is the floor for one Chrome plus one page,
+so recycling gets within 10% of that at a third of the runtime.
+
+Each restart also briefly holds two Chrome processes. Four startups means three such windows
+instead of nineteen, which is what exhausted the instance before.
+
+```bash
+# Series to scrape per Chrome instance. Default: 5
+# Lower it to reduce peak memory at the cost of more startups and runtime.
+SERIES_PER_BROWSER=5
+```
+
+If you still hit the limit, lower this before reaching for a bigger instance — but note that
+one Chrome plus Node plus Express on 512 MB is inherently tight, and a paid instance is the
+honest fix rather than shaving further.
 
 ### Puppeteer environment variables
 
